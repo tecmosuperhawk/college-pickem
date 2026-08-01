@@ -1868,25 +1868,65 @@
       if (a === b) return true;
       if (a.includes(b) || b.includes(a)) return true;
       const aliases = TEAM_ALIASES[a] || [a];
-      return aliases.some(al => {
+      if (aliases.some(al => {
         const n = normalizeTeamName(al);
         return n === b || b.includes(n) || n.includes(b);
-      });
+      })) return true;
+      for (const [key, list] of Object.entries(TEAM_ALIASES)) {
+        const keyN = normalizeTeamName(key);
+        const listN = list.map(normalizeTeamName);
+        if ((keyN === a || listN.includes(a)) && (keyN === b || listN.includes(b) || listN.some(x => b.includes(x) || x.includes(b)))) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function teamsMatchGame(ourAway, ourHome, espnAway, espnHome) {
+      if (teamMatches(ourAway, espnAway) && teamMatches(ourHome, espnHome)) return 'normal';
+      if (teamMatches(ourAway, espnHome) && teamMatches(ourHome, espnAway)) return 'swapped';
+      return null;
     }
 
     async function fetchEspnScoreboard(dates) {
-      // groups=80 → FBS; dates can be YYYYMMDD or YYYYMMDD-YYYYMMDD
-      const url = `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&dates=${dates}`;
+      const url = `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
       let res;
       try {
         res = await fetch(url);
       } catch (e) {
-        // CORS / file:// fallback
         const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
         res = await fetch(proxy);
       }
       if (!res.ok) throw new Error('ESPN scoreboard HTTP ' + res.status);
       return res.json();
+    }
+
+    async function fetchEspnEventsForWeek() {
+      const w = currentWeekMeta();
+      const windows = [];
+      if (w && w.week_number === 0) windows.push('20260829-20260904');
+      else if (w && w.week_number === 1) windows.push('20260905-20260914');
+      else windows.push('20260829-20260914');
+      const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
+      if (ds.length) {
+        const lo = ds[0], hi = ds[ds.length - 1];
+        windows.push(lo === hi ? lo : `${lo}-${hi}`);
+      }
+      const seen = new Set();
+      const events = [];
+      for (const dates of [...new Set(windows)]) {
+        try {
+          const data = await fetchEspnScoreboard(dates);
+          (data.events || []).forEach(ev => {
+            if (ev.id && seen.has(ev.id)) return;
+            if (ev.id) seen.add(ev.id);
+            events.push(ev);
+          });
+        } catch (e) {
+          console.warn('ESPN window failed', dates, e);
+        }
+      }
+      return events;
     }
 
     /**
@@ -2085,33 +2125,50 @@
       const btn = document.getElementById('admin-fetch-odds');
       if (btn) { btn.disabled = true; btn.textContent = 'Odds…'; }
       try {
-        const w = currentWeekMeta();
-        let dates = '20260829-20260905';
-        if (w && w.week_number >= 1) dates = '20260905-20260915';
-        if (games.length) {
-          const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(Boolean).sort();
-          if (ds.length) dates = ds[0] + (ds.length > 1 ? '-' + ds[ds.length - 1] : '');
-        }
-
-        const data = await fetchEspnScoreboard(dates);
-        const events = data.events || [];
+        const events = await fetchEspnEventsForWeek();
         let matched = 0;
         let saved = 0;
+        const unmatched = [];
 
+        // Parse ESPN board once
+        const board = [];
         for (const ev of events) {
           const comp = (ev.competitions && ev.competitions[0]) || {};
           const competitors = comp.competitors || [];
           const home = competitors.find(c => c.homeAway === 'home');
           const away = competitors.find(c => c.homeAway === 'away');
           if (!home || !away) continue;
+          const tAway = away.team || {};
+          const tHome = home.team || {};
+          board.push({
+            ev, comp,
+            awayNames: [tAway.shortDisplayName, tAway.location, tAway.displayName, tAway.name, tAway.abbreviation].filter(Boolean),
+            homeNames: [tHome.shortDisplayName, tHome.location, tHome.displayName, tHome.name, tHome.abbreviation].filter(Boolean)
+          });
+        }
 
-          const awayName = away.team?.displayName || away.team?.shortDisplayName || away.team?.name;
-          const homeName = home.team?.displayName || home.team?.shortDisplayName || home.team?.name;
-          const g = games.find(x => teamMatches(x.away, awayName) && teamMatches(x.home, homeName));
-          if (!g) continue;
+        for (const g of games) {
+          if (!g.away || !g.home) continue;
+          let hit = null;
+          let orient = null;
+          for (const b of board) {
+            for (const ea of b.awayNames) {
+              for (const eh of b.homeNames) {
+                const o = teamsMatchGame(g.away, g.home, ea, eh);
+                if (o) { hit = b; orient = o; break; }
+              }
+              if (hit) break;
+            }
+            if (hit) break;
+          }
+          if (!hit) {
+            unmatched.push(`${g.away} @ ${g.home}`);
+            continue;
+          }
           matched++;
+          const { ev, comp } = hit;
 
-          // --- Odds ---
+          // --- Odds (ESPN spread is home line) ---
           let spread = null;
           let total = null;
           const oddsArr = comp.odds || ev.odds || [];
@@ -2123,11 +2180,10 @@
               if (m) spread = Number(m[1]);
             }
             if (o0.overUnder != null) total = Number(o0.overUnder);
-            if (o0.homeTeamOdds?.pointSpread != null) {
-              const ps = o0.homeTeamOdds.pointSpread;
-              const n = Number(typeof ps === 'object' ? (ps.american ?? ps.close ?? ps) : ps);
-              if (!isNaN(n)) spread = n;
-            }
+          }
+          // If slate has home/away swapped vs ESPN, flip the home-line
+          if (spread != null && !isNaN(spread) && orient === 'swapped') {
+            spread = -spread;
           }
           if (spread != null && !isNaN(spread)) {
             const half = forceHalfPoint(spread);
@@ -2138,14 +2194,12 @@
             if (g.isTiebreaker) g.totalLine = tHalf;
           }
 
-          // --- Kickoff (UTC ISO from ESPN) ---
+          // --- Kickoff ---
           const kickIso = comp.date || ev.date;
           if (kickIso) {
             g.kickoff = kickIso;
-            // Local CT display time + calendar date
             g.time = formatInAppTz(kickIso, { hour: 'numeric', minute: '2-digit', hour12: true }) || g.time;
             const ymd = formatInAppTz(kickIso, { year: 'numeric', month: '2-digit', day: '2-digit' });
-            // en-US gives MM/DD/YYYY — convert to YYYY-MM-DD
             const parts = (ymd || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
             if (parts) {
               g.date = `${parts[3]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
@@ -2156,15 +2210,12 @@
           const tv = espnBroadcastName(comp);
           if (tv) g.tv = tv;
 
-          // --- Notes (special events / neutral site) ---
+          // --- Notes ---
           const note = espnEventNotes(ev, comp);
-          if (note) {
-            // Keep existing non-event notes if any; prefer ESPN event title when present
-            g.notes = note;
-          }
+          if (note) g.notes = note;
 
-          // --- Persist this game ---
-          if (typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id)) {
+          // --- Persist ---
+          if (g._fromDb || (typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id) && !String(g.id).startsWith('new-'))) {
             const payload = {
               odds: Number(g.odds),
               game_time: g.time || null,
@@ -2176,13 +2227,23 @@
             };
             const { error } = await sb.from('games').update(payload).eq('id', g.id);
             if (error) throw error;
+            g._fromDb = true;
             saved++;
           }
         }
 
         renderAdmin();
         if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
-        alert(`ESPN refresh: ${matched} matched, ${saved} saved to database.\n(Odds, kickoff, TV, notes when available.)`);
+        let msg = `ESPN: ${board.length} games on board, ${matched} matched, ${saved} saved.`;
+        if (unmatched.length) {
+          msg += `\n\nNo match for:\n• ${unmatched.slice(0, 8).join('\n• ')}`;
+          if (unmatched.length > 8) msg += `\n• …and ${unmatched.length - 8} more`;
+          msg += '\n\nCheck team names match the dropdown (e.g. Miami FL, not Miami).';
+        }
+        if (!board.length) {
+          msg += '\n\nNo ESPN events in the date window — games may not be posted yet for that week.';
+        }
+        alert(msg);
       } catch (e) {
         console.error(e);
         alert('Odds refresh failed: ' + (e.message || e));
