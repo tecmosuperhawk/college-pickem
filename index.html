@@ -294,8 +294,9 @@
 
     <!-- MY PICKS (entry) -->
     <div id="view-picks" class="view-section">
-      <h1>Week 0 Picks</h1>
-      <p class="subtitle">Saturday Aug 29 – Friday Sep 4, 2026 · Against the spread · Times in CT</p>
+      <h1 id="picks-week-title">Picks</h1>
+      <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
+      <div id="week-tabs" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem;"></div>
       <div id="picks-games"></div>
       <div class="card" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
         <h3 style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
@@ -353,13 +354,27 @@
     <!-- ADMIN -->
     <div id="view-admin" class="view-section">
       <h1>Admin – Week Slate</h1>
-      <p class="subtitle">Set games, metadata, and pull odds. (Odds auto-fetch is mocked in this prototype.)</p>
+      <p class="subtitle">Manage weeks, games, and pull scores/odds from ESPN.</p>
+      <div class="card" style="margin-bottom:1rem;">
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;">
+          <label style="margin:0;font-size:0.85rem;color:var(--muted);">Editing week</label>
+          <select id="admin-week-select" style="min-width:160px;"></select>
+          <button class="btn btn-sm" id="admin-create-week">+ Create next week</button>
+          <label style="margin:0;font-size:0.85rem;display:flex;align-items:center;gap:0.35rem;">
+            <input type="checkbox" id="admin-picks-open"> Open for picks
+          </label>
+          <button class="btn btn-sm btn-outline" id="admin-save-week-flags">Save week flags</button>
+        </div>
+        <p style="margin:0.75rem 0 0;font-size:0.8rem;color:var(--muted);">
+          Multiple weeks can be open for picks at once (e.g. Week 0 + Week 1). Users switch weeks on My Picks.
+        </p>
+      </div>
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
-          <strong>Week 0 Games</strong>
-          <div style="display:flex;gap:0.5rem;">
-            <button class="btn btn-sm" id="admin-fetch-scores">↻ Refresh Scores (ESPN)</button>
-            <button class="btn btn-sm btn-outline" id="admin-fetch-odds">↻ Odds (mock)</button>
+          <strong id="admin-week-label">Games</strong>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-sm" id="admin-fetch-scores">↻ Scores (ESPN)</button>
+            <button class="btn btn-sm btn-outline" id="admin-fetch-odds">↻ Odds (ESPN)</button>
             <button class="btn btn-sm btn-outline" id="admin-add-game">+ Add Game</button>
           </div>
         </div>
@@ -368,15 +383,6 @@
           <button class="btn" id="admin-save">Save Slate</button>
           <span class="success-msg hidden" id="admin-save-msg">Slate saved.</span>
         </div>
-      </div>
-      <div class="card" style="margin-top:1rem;">
-        <h3 style="margin-bottom:0.75rem;font-size:1rem;">Notes for production</h3>
-        <ul style="font-size:0.85rem;color:var(--muted);padding-left:1.2rem;">
-          <li>Odds: call ESPN Core API, The Odds API, or DraftKings public endpoints from a backend, then store line + source + timestamp.</li>
-          <li>Live scores: ESPN Scoreboard API or similar; poll every 30–60s while games are live.</li>
-          <li>Auth: replace localStorage with a real DB + hashed passwords (e.g. bcrypt) and session cookies / JWT.</li>
-          <li>Lock logic: compare server UTC time to each game’s kickoff; never trust client clock alone.</li>
-        </ul>
       </div>
     </div>
   </div>
@@ -701,59 +707,150 @@
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     let activeWeekId = null;
+    let allWeeks = []; // { id, label, week_number, season_year, is_active, picks_open }
+
+    function mapGameRow(g, idx) {
+      return {
+        id: g.id,
+        num: g.sort_order || idx + 1,
+        time: g.game_time || '',
+        tv: g.tv || '',
+        away: g.away_team,
+        home: g.home_team,
+        odds: Number(g.odds),
+        date: g.game_date || '',
+        kickoff: g.kickoff_at,
+        notes: g.notes || '',
+        isTiebreaker: !!g.is_tiebreaker,
+        totalLine: g.total_line != null ? Number(g.total_line) : null,
+        away_score: g.away_score,
+        home_score: g.home_score,
+        status: g.status
+      };
+    }
+
+    function currentWeekMeta() {
+      return allWeeks.find(w => w.id === activeWeekId) || null;
+    }
+
+    function renderWeekTabs() {
+      const tabs = document.getElementById('week-tabs');
+      if (!tabs) return;
+      const openWeeks = allWeeks.filter(w => w.picks_open || w.is_active);
+      if (!openWeeks.length) {
+        tabs.innerHTML = '<span style="color:var(--muted);font-size:0.85rem;">No weeks open for picks.</span>';
+        return;
+      }
+      tabs.innerHTML = openWeeks.map(w =>
+        `<button type="button" class="btn btn-sm ${w.id === activeWeekId ? '' : 'btn-outline'}" data-week="${w.id}">${w.label}</button>`
+      ).join('');
+      tabs.querySelectorAll('button[data-week]').forEach(btn => {
+        btn.onclick = async () => {
+          if (btn.dataset.week === activeWeekId) return;
+          activeWeekId = btn.dataset.week;
+          await loadGamesForWeek(activeWeekId);
+          await loadMyData();
+          updatePicksHeader();
+          renderWeekTabs();
+          renderPicksEntry();
+        };
+      });
+    }
+
+    function updatePicksHeader() {
+      const w = currentWeekMeta();
+      const title = document.getElementById('picks-week-title');
+      const sub = document.getElementById('picks-week-subtitle');
+      if (title) title.textContent = w ? `${w.label} Picks` : 'Picks';
+      if (sub) sub.textContent = w
+        ? `${w.label} · Against the spread · Times in CT`
+        : 'Against the spread · Times in CT';
+      const adminLabel = document.getElementById('admin-week-label');
+      if (adminLabel) adminLabel.textContent = w ? `${w.label} Games` : 'Games';
+    }
+
+    function populateAdminWeekSelect() {
+      const sel = document.getElementById('admin-week-select');
+      if (!sel) return;
+      sel.innerHTML = allWeeks.map(w =>
+        `<option value="${w.id}" ${w.id === activeWeekId ? 'selected' : ''}>${w.label}${w.picks_open ? ' (picks open)' : ''}</option>`
+      ).join('');
+      const meta = currentWeekMeta();
+      const cb = document.getElementById('admin-picks-open');
+      if (cb) cb.checked = !!(meta && meta.picks_open);
+    }
+
+    async function loadWeeksFromSupabase() {
+      const { data, error } = await sb
+        .from('weeks')
+        .select('id, label, week_number, season_year, is_active, picks_open')
+        .order('season_year', { ascending: false })
+        .order('week_number', { ascending: true });
+      if (error) {
+        // picks_open column may not exist yet — fall back
+        if (String(error.message || '').includes('picks_open')) {
+          const { data: d2, error: e2 } = await sb
+            .from('weeks')
+            .select('id, label, week_number, season_year, is_active')
+            .order('week_number');
+          if (e2) throw e2;
+          allWeeks = (d2 || []).map(w => ({ ...w, picks_open: !!w.is_active }));
+          return;
+        }
+        throw error;
+      }
+      allWeeks = (data || []).map(w => ({
+        ...w,
+        picks_open: w.picks_open == null ? !!w.is_active : !!w.picks_open
+      }));
+    }
+
+    async function loadGamesForWeek(weekId) {
+      if (!weekId) {
+        games = [];
+        activeWeekId = null;
+        return;
+      }
+      activeWeekId = weekId;
+      const { data: rows, error } = await sb
+        .from('games')
+        .select('*')
+        .eq('week_id', weekId)
+        .order('sort_order');
+      if (error) throw error;
+      games = (rows || []).map(mapGameRow);
+      Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
+      games.forEach(g => {
+        if (g.away_score != null && g.home_score != null) {
+          LIVE_SCORES[g.id] = {
+            away: g.away_score,
+            home: g.home_score,
+            status: g.status === 'final' ? 'FINAL' : (g.status === 'live' ? 'LIVE' : g.status)
+          };
+        }
+      });
+    }
 
     async function loadGamesFromSupabase() {
       try {
-        const { data: week, error: weekErr } = await sb
-          .from('weeks')
-          .select('id, label')
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-        if (weekErr) throw weekErr;
-        if (!week) {
-          console.warn('No active week');
+        await loadWeeksFromSupabase();
+        // Prefer currently selected week if still valid; else first picks_open; else is_active; else first
+        let prefer = allWeeks.find(w => w.id === activeWeekId)
+          || allWeeks.find(w => w.picks_open)
+          || allWeeks.find(w => w.is_active)
+          || allWeeks[0];
+        if (!prefer) {
           games = [];
           activeWeekId = null;
+          renderWeekTabs();
+          updatePicksHeader();
           return;
         }
-        activeWeekId = week.id;
-
-        const { data: rows, error } = await sb
-          .from('games')
-          .select('*')
-          .eq('week_id', week.id)
-          .order('sort_order');
-        if (error) throw error;
-
-        games = (rows || []).map((g, idx) => ({
-          id: g.id,
-          num: g.sort_order || idx + 1,
-          time: g.game_time || '',
-          tv: g.tv || '',
-          away: g.away_team,
-          home: g.home_team,
-          odds: Number(g.odds),
-          date: g.game_date || '',
-          kickoff: g.kickoff_at,
-          notes: g.notes || '',
-          isTiebreaker: !!g.is_tiebreaker,
-          totalLine: g.total_line != null ? Number(g.total_line) : null,
-          away_score: g.away_score,
-          home_score: g.home_score,
-          status: g.status
-        }));
-        // Reflect stored scores in the live score map used by the UI
-        games.forEach(g => {
-          if (g.away_score != null && g.home_score != null) {
-            LIVE_SCORES[g.id] = {
-              away: g.away_score,
-              home: g.home_score,
-              status: g.status === 'final' ? 'FINAL' : (g.status === 'live' ? 'LIVE' : g.status)
-            };
-          }
-        });
-        console.log('Loaded games:', games.length);
+        await loadGamesForWeek(prefer.id);
+        renderWeekTabs();
+        updatePicksHeader();
+        populateAdminWeekSelect();
+        console.log('Loaded games:', games.length, 'week', prefer.label);
       } catch (e) {
         console.error('loadGamesFromSupabase failed', e);
         games = [];
@@ -1866,20 +1963,156 @@
 
     document.getElementById('admin-fetch-scores').onclick = () => refreshScoresFromEspn({ silent: false });
 
-    document.getElementById('admin-fetch-odds').onclick = () => {
-      // Mock: nudge odds slightly to simulate a refresh from ESPN/DK — always land on .5
-      games.forEach(g => {
-        const delta = (Math.random() - 0.5);
-        let next = Math.round((g.odds + delta) * 2) / 2;
-        if (Math.abs(Math.abs(next) - Math.floor(Math.abs(next)) - 0.5) > 1e-9) {
-          next = next > 0 ? next + 0.5 : next - 0.5;
+    function forceHalfPoint(n) {
+      if (typeof n !== 'number' || isNaN(n)) return null;
+      // Snap to nearest .5
+      const snapped = Math.round(n * 2) / 2;
+      const abs = Math.abs(snapped);
+      if (Math.abs(abs - Math.floor(abs) - 0.5) < 1e-9) return snapped;
+      // If landed on whole number, push half point toward original direction
+      return snapped >= 0 ? snapped + 0.5 : snapped - 0.5;
+    }
+
+    /** Pull spreads (+ totals when present) from ESPN scoreboard odds */
+    async function refreshOddsFromEspn() {
+      if (!currentUser?.isAdmin) {
+        alert('Only admins can refresh odds.');
+        return;
+      }
+      const btn = document.getElementById('admin-fetch-odds');
+      if (btn) { btn.disabled = true; btn.textContent = 'Odds…'; }
+      try {
+        const w = currentWeekMeta();
+        // Date window: Week 0 default; Week 1+ can use broader range from games
+        let dates = '20260829-20260905';
+        if (w && w.week_number >= 1) dates = '20260905-20260915';
+        if (games.length && games[0].date) {
+          const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(Boolean).sort();
+          if (ds.length) dates = ds[0] + (ds.length > 1 ? '-' + ds[ds.length - 1] : '');
         }
-        g.odds = next;
-      });
-      const tb = games.find(g => g.isTiebreaker);
-      if (tb) tb.totalLine = 54.5;
+
+        const data = await fetchEspnScoreboard(dates);
+        const events = data.events || [];
+        let matched = 0;
+        let updated = 0;
+
+        events.forEach(ev => {
+          const comp = (ev.competitions && ev.competitions[0]) || {};
+          const competitors = comp.competitors || [];
+          const home = competitors.find(c => c.homeAway === 'home');
+          const away = competitors.find(c => c.homeAway === 'away');
+          if (!home || !away) return;
+
+          const awayName = away.team?.displayName || away.team?.shortDisplayName || away.team?.name;
+          const homeName = home.team?.displayName || home.team?.shortDisplayName || home.team?.name;
+          const g = games.find(x => teamMatches(x.away, awayName) && teamMatches(x.home, homeName));
+          if (!g) return;
+          matched++;
+
+          // ESPN odds shapes vary: array on competition, or provider list
+          let spread = null;
+          let total = null;
+          const oddsArr = comp.odds || ev.odds || [];
+          const o0 = Array.isArray(oddsArr) ? oddsArr[0] : oddsArr;
+          if (o0) {
+            if (o0.spread != null) spread = Number(o0.spread);
+            else if (o0.details && /[+-]?\d+(\.\d+)?/.test(o0.details)) {
+              // details often like "TEAM -6.5"
+              const m = String(o0.details).match(/([+-]?\d+(?:\.\d+)?)/);
+              if (m) spread = Number(m[1]);
+            }
+            if (o0.overUnder != null) total = Number(o0.overUnder);
+            // home team point spread preferred when present
+            if (o0.homeTeamOdds && o0.homeTeamOdds.pointSpread != null) {
+              spread = Number(o0.homeTeamOdds.pointSpread.american || o0.homeTeamOdds.pointSpread);
+            }
+          }
+
+          if (spread != null && !isNaN(spread)) {
+            const half = forceHalfPoint(spread);
+            if (half != null && half !== g.odds) {
+              g.odds = half;
+              updated++;
+            }
+          }
+          if (g.isTiebreaker && total != null && !isNaN(total)) {
+            g.totalLine = forceHalfPoint(total) ?? total;
+          }
+
+          // TV / time hints when empty
+          if (!g.tv && comp.broadcasts && comp.broadcasts[0]) {
+            const b = comp.broadcasts[0];
+            g.tv = (b.names && b.names[0]) || b.market || g.tv;
+          }
+        });
+
+        renderAdmin();
+        alert(`ESPN odds: ${matched} game(s) matched on scoreboard, ${updated} line(s) updated.\nSave Slate to write lines to the database.`);
+      } catch (e) {
+        console.error(e);
+        alert('Odds refresh failed: ' + (e.message || e));
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '↻ Odds (ESPN)'; }
+      }
+    }
+
+    document.getElementById('admin-fetch-odds').onclick = () => refreshOddsFromEspn();
+
+    document.getElementById('admin-week-select').onchange = async () => {
+      const id = document.getElementById('admin-week-select').value;
+      activeWeekId = id;
+      await loadGamesForWeek(id);
+      populateAdminWeekSelect();
+      updatePicksHeader();
       renderAdmin();
-      alert('Odds refreshed from mock provider (in production this would hit ESPN / The Odds API / DraftKings).');
+      renderWeekTabs();
+    };
+
+    document.getElementById('admin-save-week-flags').onclick = async () => {
+      if (!currentUser?.isAdmin || !activeWeekId) return;
+      const open = document.getElementById('admin-picks-open').checked;
+      const { error } = await sb.from('weeks').update({ picks_open: open }).eq('id', activeWeekId);
+      if (error) {
+        alert('Could not update week flags: ' + error.message + '\n\nRun the picks_open SQL migration first.');
+        return;
+      }
+      const w = allWeeks.find(x => x.id === activeWeekId);
+      if (w) w.picks_open = open;
+      populateAdminWeekSelect();
+      renderWeekTabs();
+      alert(open ? 'Week is open for picks.' : 'Week closed for picks.');
+    };
+
+    document.getElementById('admin-create-week').onclick = async () => {
+      if (!currentUser?.isAdmin) {
+        alert('Admin only.');
+        return;
+      }
+      const maxN = allWeeks.reduce((m, w) => Math.max(m, w.week_number || 0), -1);
+      const nextNum = maxN + 1;
+      const year = allWeeks[0]?.season_year || 2026;
+      const label = `Week ${nextNum}`;
+      if (!confirm(`Create ${label} (${year}) and open it for picks?`)) return;
+      const { data, error } = await sb.from('weeks').insert({
+        season_year: year,
+        week_number: nextNum,
+        label,
+        is_active: false,
+        picks_open: true
+      }).select('*').single();
+      if (error) {
+        alert('Could not create week: ' + error.message + '\n\nIf this mentions picks_open, run the SQL migration first.');
+        return;
+      }
+      allWeeks.push({ ...data, picks_open: true });
+      allWeeks.sort((a, b) => a.week_number - b.week_number);
+      activeWeekId = data.id;
+      games = [];
+      populateAdminWeekSelect();
+      updatePicksHeader();
+      renderWeekTabs();
+      renderAdmin();
+      alert(`${label} created. Add games, pull odds from ESPN, then Save Slate.`);
     };
 
     document.getElementById('admin-save').onclick = async () => {
