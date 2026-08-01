@@ -1973,7 +1973,53 @@
       return snapped >= 0 ? snapped + 0.5 : snapped - 0.5;
     }
 
-    /** Pull spreads (+ totals when present) from ESPN scoreboard odds */
+    /** Extract broadcast network name from ESPN competition */
+    function espnBroadcastName(comp) {
+      const broadcasts = comp.broadcasts || [];
+      const names = [];
+      broadcasts.forEach(b => {
+        if (Array.isArray(b.names)) names.push(...b.names);
+        else if (b.name) names.push(b.name);
+        else if (b.media?.shortName) names.push(b.media.shortName);
+        else if (b.type?.shortName) names.push(b.type.shortName);
+      });
+      // geoBroadcasts sometimes holds the useful label
+      (comp.geoBroadcasts || []).forEach(gb => {
+        if (gb.media?.shortName) names.push(gb.media.shortName);
+        if (gb.type?.shortName) names.push(gb.type.shortName);
+      });
+      const unique = [...new Set(names.map(n => String(n).trim()).filter(Boolean))];
+      return unique[0] || '';
+    }
+
+    /** Neutral-site / special-event notes from ESPN */
+    function espnEventNotes(ev, comp) {
+      const bits = [];
+      const headlines = ev.competitions?.[0]?.notes || comp.notes || ev.notes || [];
+      if (Array.isArray(headlines)) {
+        headlines.forEach(n => {
+          const t = n.headline || n.text || n.description || (typeof n === 'string' ? n : '');
+          if (t) bits.push(String(t).trim());
+        });
+      }
+      // Some payloads put the classic name on the event
+      if (ev.name && /kickoff|classic|bowl|neutral/i.test(ev.name) && !bits.length) {
+        // avoid duplicating "Team at Team"
+      }
+      const venue = comp.venue;
+      if (venue?.indoor === false && venue?.fullName) {
+        // optional: city/stadium in notes only if special
+      }
+      // Neutral site flag often implies a named event
+      if (comp.neutralSite && venue?.fullName) {
+        const city = [venue.address?.city, venue.address?.state].filter(Boolean).join(', ');
+        const loc = city ? `${venue.fullName}, ${city}` : venue.fullName;
+        if (!bits.some(b => b.includes(venue.fullName))) bits.push(loc);
+      }
+      return bits.filter(Boolean).join(' · ');
+    }
+
+    /** Pull odds + kickoff + TV + notes from ESPN, then save matched rows to Supabase */
     async function refreshOddsFromEspn() {
       if (!currentUser?.isAdmin) {
         alert('Only admins can refresh odds.');
@@ -1983,10 +2029,9 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Odds…'; }
       try {
         const w = currentWeekMeta();
-        // Date window: Week 0 default; Week 1+ can use broader range from games
         let dates = '20260829-20260905';
         if (w && w.week_number >= 1) dates = '20260905-20260915';
-        if (games.length && games[0].date) {
+        if (games.length) {
           const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(Boolean).sort();
           if (ds.length) dates = ds[0] + (ds.length > 1 ? '-' + ds[ds.length - 1] : '');
         }
@@ -1994,22 +2039,22 @@
         const data = await fetchEspnScoreboard(dates);
         const events = data.events || [];
         let matched = 0;
-        let updated = 0;
+        let saved = 0;
 
-        events.forEach(ev => {
+        for (const ev of events) {
           const comp = (ev.competitions && ev.competitions[0]) || {};
           const competitors = comp.competitors || [];
           const home = competitors.find(c => c.homeAway === 'home');
           const away = competitors.find(c => c.homeAway === 'away');
-          if (!home || !away) return;
+          if (!home || !away) continue;
 
           const awayName = away.team?.displayName || away.team?.shortDisplayName || away.team?.name;
           const homeName = home.team?.displayName || home.team?.shortDisplayName || home.team?.name;
           const g = games.find(x => teamMatches(x.away, awayName) && teamMatches(x.home, homeName));
-          if (!g) return;
+          if (!g) continue;
           matched++;
 
-          // ESPN odds shapes vary: array on competition, or provider list
+          // --- Odds ---
           let spread = null;
           let total = null;
           const oddsArr = comp.odds || ev.odds || [];
@@ -2017,37 +2062,70 @@
           if (o0) {
             if (o0.spread != null) spread = Number(o0.spread);
             else if (o0.details && /[+-]?\d+(\.\d+)?/.test(o0.details)) {
-              // details often like "TEAM -6.5"
               const m = String(o0.details).match(/([+-]?\d+(?:\.\d+)?)/);
               if (m) spread = Number(m[1]);
             }
             if (o0.overUnder != null) total = Number(o0.overUnder);
-            // home team point spread preferred when present
-            if (o0.homeTeamOdds && o0.homeTeamOdds.pointSpread != null) {
-              spread = Number(o0.homeTeamOdds.pointSpread.american || o0.homeTeamOdds.pointSpread);
+            if (o0.homeTeamOdds?.pointSpread != null) {
+              const ps = o0.homeTeamOdds.pointSpread;
+              const n = Number(typeof ps === 'object' ? (ps.american ?? ps.close ?? ps) : ps);
+              if (!isNaN(n)) spread = n;
             }
           }
-
           if (spread != null && !isNaN(spread)) {
             const half = forceHalfPoint(spread);
-            if (half != null && half !== g.odds) {
-              g.odds = half;
-              updated++;
+            if (half != null) g.odds = half;
+          }
+          if (total != null && !isNaN(total)) {
+            const tHalf = forceHalfPoint(total) ?? total;
+            if (g.isTiebreaker) g.totalLine = tHalf;
+          }
+
+          // --- Kickoff (UTC ISO from ESPN) ---
+          const kickIso = comp.date || ev.date;
+          if (kickIso) {
+            g.kickoff = kickIso;
+            // Local CT display time + calendar date
+            g.time = formatInAppTz(kickIso, { hour: 'numeric', minute: '2-digit', hour12: true }) || g.time;
+            const ymd = formatInAppTz(kickIso, { year: 'numeric', month: '2-digit', day: '2-digit' });
+            // en-US gives MM/DD/YYYY — convert to YYYY-MM-DD
+            const parts = (ymd || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (parts) {
+              g.date = `${parts[3]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
             }
           }
-          if (g.isTiebreaker && total != null && !isNaN(total)) {
-            g.totalLine = forceHalfPoint(total) ?? total;
+
+          // --- TV ---
+          const tv = espnBroadcastName(comp);
+          if (tv) g.tv = tv;
+
+          // --- Notes (special events / neutral site) ---
+          const note = espnEventNotes(ev, comp);
+          if (note) {
+            // Keep existing non-event notes if any; prefer ESPN event title when present
+            g.notes = note;
           }
 
-          // TV / time hints when empty
-          if (!g.tv && comp.broadcasts && comp.broadcasts[0]) {
-            const b = comp.broadcasts[0];
-            g.tv = (b.names && b.names[0]) || b.market || g.tv;
+          // --- Persist this game ---
+          if (typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id)) {
+            const payload = {
+              odds: Number(g.odds),
+              game_time: g.time || null,
+              tv: g.tv || null,
+              game_date: g.date || null,
+              kickoff_at: g.kickoff || null,
+              notes: g.notes || null,
+              total_line: g.totalLine != null ? Number(g.totalLine) : null
+            };
+            const { error } = await sb.from('games').update(payload).eq('id', g.id);
+            if (error) throw error;
+            saved++;
           }
-        });
+        }
 
         renderAdmin();
-        alert(`ESPN odds: ${matched} game(s) matched on scoreboard, ${updated} line(s) updated.\nSave Slate to write lines to the database.`);
+        if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
+        alert(`ESPN refresh: ${matched} matched, ${saved} saved to database.\n(Odds, kickoff, TV, notes when available.)`);
       } catch (e) {
         console.error(e);
         alert('Odds refresh failed: ' + (e.message || e));
