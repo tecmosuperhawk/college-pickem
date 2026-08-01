@@ -286,14 +286,8 @@
           <button class="btn" style="width:100%" id="do-register">Create Account</button>
           <p class="error hidden" id="reg-error"></p>
         </div>
-        <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border);text-align:center;">
-          <button class="btn btn-outline" style="width:100%" id="do-demo">Demo</button>
-          <p style="margin-top:0.6rem;font-size:0.8rem;color:var(--muted);">
-            Skip login and explore as <strong>Demo User</strong>
-          </p>
-        </div>
         <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);text-align:center;">
-          Simple email + password for a small trusted group. Data stored in this browser (prototype).
+          Simple email + password for a small trusted group.
         </p>
       </div>
     </div>
@@ -854,10 +848,6 @@
         email,
         isAdmin: !!profile?.is_admin
       });
-    };
-
-    document.getElementById('do-demo').onclick = () => {
-      alert('Demo mode is disabled now that Supabase is connected.\n\nLog in with your real account (andypierce32@gmail.com).');
     };
 
     document.getElementById('logout-btn').onclick = async () => {
@@ -1848,20 +1838,74 @@
       alert('Odds refreshed from mock provider (in production this would hit ESPN / The Odds API / DraftKings).');
     };
 
-    document.getElementById('admin-save').onclick = () => {
+    document.getElementById('admin-save').onclick = async () => {
+      if (!currentUser?.isAdmin) {
+        alert('Only admins can save the slate.');
+        return;
+      }
+      if (!activeWeekId) {
+        alert('No active week loaded.');
+        return;
+      }
+
       const bad = games.filter(g => {
         const abs = Math.abs(g.odds);
         return Math.abs(abs - Math.floor(abs) - 0.5) > 1e-9;
       });
       if (bad.length) {
         alert('Cannot save: every line must be a half-point number (e.g. -6.5). Fix games: ' +
-          bad.map(g => `#${g.id} ${g.away}@${g.home} (${g.odds})`).join(', '));
+          bad.map(g => `${g.away}@${g.home} (${g.odds})`).join(', '));
         return;
       }
-      storeSet('pickem_games', JSON.stringify(games));
-      document.getElementById('admin-save-msg').classList.remove('hidden');
-      setTimeout(() => document.getElementById('admin-save-msg').classList.add('hidden'), 2000);
-      if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
+
+      const btn = document.getElementById('admin-save');
+      const msg = document.getElementById('admin-save-msg');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+
+      try {
+        for (let i = 0; i < games.length; i++) {
+          const g = games[i];
+          const payload = {
+            week_id: activeWeekId,
+            sort_order: g.num != null ? g.num : i + 1,
+            away_team: g.away,
+            home_team: g.home,
+            odds: Number(g.odds),
+            game_time: g.time || null,
+            tv: g.tv || null,
+            game_date: g.date || null,
+            kickoff_at: g.kickoff || null,
+            notes: (g.notes || '').replace(/\s*\[TB\]\s*$/, ''),
+            is_tiebreaker: !!g.isTiebreaker,
+            total_line: g.totalLine != null ? Number(g.totalLine) : null,
+            status: g.status || 'scheduled'
+          };
+
+          // Existing DB rows have UUID ids; brand-new local-only rows need insert
+          const looksLikeUuid = typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id);
+          if (looksLikeUuid) {
+            const { error } = await sb.from('games').update(payload).eq('id', g.id);
+            if (error) throw error;
+          } else {
+            const { data, error } = await sb.from('games').insert(payload).select('id').single();
+            if (error) throw error;
+            g.id = data.id;
+          }
+          g.num = payload.sort_order;
+        }
+
+        msg.textContent = 'Slate saved to database.';
+        msg.classList.remove('hidden');
+        setTimeout(() => msg.classList.add('hidden'), 2500);
+        if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
+      } catch (e) {
+        console.error(e);
+        alert('Could not save slate: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save Slate';
+      }
     };
 
     function renderAll() {
