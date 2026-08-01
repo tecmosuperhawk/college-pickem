@@ -771,7 +771,9 @@
           await loadMyData();
           showView('picks');
           renderAll();
+          startScorePolling();
         } else {
+          stopScorePolling();
           games = [];
           myPicks = {};
           myTotal = null;
@@ -856,6 +858,7 @@
       } catch (e) {
         console.error('signOut error', e);
       }
+      stopScorePolling();
       currentUser = null;
       games = [];
       myPicks = {};
@@ -1732,18 +1735,21 @@
       return res.json();
     }
 
-    async function refreshScoresFromEspn() {
-      if (!currentUser?.isAdmin) {
-        alert('Only admins can refresh scores.');
-        return;
-      }
+    /**
+   * Pull scores from ESPN and write away_score / home_score / status to Supabase.
+   * @param {{ silent?: boolean }} opts  silent=true for background polling (no alerts)
+   */
+    async function refreshScoresFromEspn(opts = {}) {
+      const silent = !!opts.silent;
+      if (!currentUser) return { matched: 0, updated: 0 };
+
       const btn = document.getElementById('admin-fetch-scores');
-      if (btn) {
+      if (!silent && btn) {
         btn.disabled = true;
         btn.textContent = 'Updating…';
       }
       try {
-        // Week 0 window from our slate dates
+        // Week 0 window — extend/change per week later
         const dates = '20260829-20260905';
         const data = await fetchEspnScoreboard(dates);
         const events = data.events || [];
@@ -1784,7 +1790,6 @@
           const awayScore = match.awayScore;
           const homeScore = match.homeScore;
 
-          // Only write if something changed
           if (g.away_score === awayScore && g.home_score === homeScore && g.status === newStatus) continue;
 
           const { error } = await sb
@@ -1801,26 +1806,65 @@
           g.home_score = homeScore;
           g.status = newStatus;
           if (awayScore != null && homeScore != null) {
-            LIVE_SCORES[g.id] = { away: awayScore, home: homeScore, status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE') };
+            LIVE_SCORES[g.id] = {
+              away: awayScore,
+              home: homeScore,
+              status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE')
+            };
           }
           updated++;
         }
 
-        renderAdmin();
-        if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
-        alert(`ESPN scores: ${matched} game(s) matched, ${updated} updated.\n(Unmatched games may use different team names — we can add aliases.)`);
+        if (updated > 0) {
+          if (document.getElementById('view-admin')?.classList.contains('active')) renderAdmin();
+          if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
+          if (document.getElementById('view-standings')?.classList.contains('active')) renderStandings('week');
+          if (document.getElementById('view-others')?.classList.contains('active')) renderOthers();
+        }
+
+        if (!silent) {
+          alert(`ESPN scores: ${matched} game(s) matched, ${updated} updated.`);
+        } else if (updated > 0) {
+          console.log(`[scores] ${updated} game(s) updated from ESPN`);
+        }
+        return { matched, updated };
       } catch (e) {
-        console.error(e);
-        alert('Score refresh failed: ' + (e.message || e) + '\n\nIf this is a CORS error, host the site on Vercel/Netlify or try again.');
+        console.error('Score refresh failed', e);
+        if (!silent) {
+          alert('Score refresh failed: ' + (e.message || e));
+        }
+        return { matched: 0, updated: 0, error: e };
       } finally {
-        if (btn) {
+        if (!silent && btn) {
           btn.disabled = false;
           btn.textContent = '↻ Refresh Scores (ESPN)';
         }
       }
     }
 
-    document.getElementById('admin-fetch-scores').onclick = () => refreshScoresFromEspn();
+    // Auto-poll ESPN while someone is logged in (keeps DB + standings fresh)
+    let scorePollTimer = null;
+    const SCORE_POLL_MS = 2 * 60 * 1000; // every 2 minutes
+
+    function startScorePolling() {
+      stopScorePolling();
+      // Immediate quiet refresh, then interval
+      refreshScoresFromEspn({ silent: true });
+      scorePollTimer = setInterval(() => {
+        if (currentUser && games.length) {
+          refreshScoresFromEspn({ silent: true });
+        }
+      }, SCORE_POLL_MS);
+    }
+
+    function stopScorePolling() {
+      if (scorePollTimer) {
+        clearInterval(scorePollTimer);
+        scorePollTimer = null;
+      }
+    }
+
+    document.getElementById('admin-fetch-scores').onclick = () => refreshScoresFromEspn({ silent: false });
 
     document.getElementById('admin-fetch-odds').onclick = () => {
       // Mock: nudge odds slightly to simulate a refresh from ESPN/DK — always land on .5
