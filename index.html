@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>College Pick'em 2026</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --away: #f59e0b;
+      --home: #8b5cf6;
+      --pick-bg: #1e3a5f;
+      --tiebreaker: #0ea5e9;
+      --star: #eab308;
+      --locked: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    .nav {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .nav-brand { font-weight: 700; font-size: 1.15rem; }
+    .nav-links { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .nav-links button, .nav-user button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .nav-links button.active, .nav-links button:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .nav-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; color: var(--muted); }
+    .container { max-width: 960px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    .hidden { display: none !important; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.7rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.95rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.3rem; }
+    .form-row { margin-bottom: 0.9rem; }
+    .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .error { color: var(--danger); font-size: 0.85rem; margin-top: 0.4rem; }
+    .success-msg { color: var(--success); font-size: 0.9rem; margin-top: 0.5rem; }
+
+    /* Game cards */
+    .game-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+    }
+    .game-card.tiebreaker-game { border-color: var(--tiebreaker); }
+    .game-card.locked { opacity: 0.85; border-color: var(--locked); }
+    .game-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.45rem 1rem; background: rgba(0,0,0,0.25);
+      font-size: 0.78rem; color: var(--muted); flex-wrap: wrap; gap: 0.3rem;
+    }
+    .game-header .tv { font-weight: 600; color: var(--text); }
+    .lock-badge {
+      background: rgba(100,116,139,0.3); color: var(--locked);
+      font-size: 0.7rem; font-weight: 700; padding: 0.12rem 0.4rem; border-radius: 4px;
+    }
+    .live-badge {
+      background: rgba(239,68,68,0.2); color: var(--danger);
+      font-size: 0.7rem; font-weight: 700; padding: 0.12rem 0.4rem; border-radius: 4px;
+    }
+    .game-body {
+      display: grid; grid-template-columns: 1fr auto 1fr;
+      gap: 0.4rem; padding: 0.7rem 1rem; align-items: center;
+    }
+    .team {
+      display: flex; flex-direction: row; align-items: center; gap: 0.4rem;
+      cursor: pointer; padding: 0.55rem 0.7rem; border-radius: 8px;
+      border: 2px solid transparent; transition: all 0.15s; position: relative; user-select: none;
+    }
+    .team:hover:not(.disabled) { background: rgba(255,255,255,0.05); }
+    .team.selected { border-color: var(--accent); background: var(--pick-bg); }
+    .team.away.selected { border-color: var(--away); }
+    .team.home.selected { border-color: var(--home); }
+    .team.disabled { cursor: default; opacity: 0.9; }
+    .team-name { font-weight: 700; font-size: 1rem; }
+    .team-score { font-size: 0.9rem; color: var(--muted); font-weight: 600; }
+    .team-line {
+      display: block;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-left: auto;
+      padding-left: 0.5rem;
+      flex-shrink: 0;
+    }
+    .team .marker {
+      position: static;
+      font-size: 1.1rem;
+      opacity: 0;
+      width: 1rem;
+      text-align: center;
+      flex-shrink: 0;
+      color: var(--accent);
+    }
+    .team.selected .marker { opacity: 1; }
+    .vs {
+      text-align: center;
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.8rem;
+      min-width: 36px;
+    }
+    .vs .odds { display: none; } /* line now lives on each team */
+    .notes { padding: 0 1rem 0.55rem; font-size: 0.78rem; color: var(--muted); font-style: italic; }
+    .tiebreaker-badge {
+      background: rgba(14,165,233,0.2); color: var(--tiebreaker);
+      font-size: 0.68rem; font-weight: 700; padding: 0.12rem 0.4rem; border-radius: 4px; text-transform: uppercase;
+    }
+    .total-input-wrap {
+      padding: 0.65rem 1rem 0.9rem; border-top: 1px dashed var(--border);
+      background: rgba(14,165,233,0.06); display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    }
+    .total-input-wrap label { margin: 0; color: var(--tiebreaker); font-weight: 600; font-size: 0.85rem; }
+    .total-input-wrap input { width: 90px; text-align: center; font-weight: 700; font-size: 1.1rem; }
+    .total-line { font-size: 0.85rem; color: var(--muted); }
+    .total-line strong { color: var(--tiebreaker); }
+
+    .star-card {
+      border-color: rgba(234,179,8,0.45);
+      background: linear-gradient(135deg, rgba(234,179,8,0.07), var(--card));
+    }
+    .star-card h3 { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .star-card h3 span { color: var(--star); }
+
+    .status-bar {
+      position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 30%);
+      padding: 1.5rem 0 1rem; text-align: center;
+    }
+    .status-text { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.65rem; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.55rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+    tr:hover td { background: rgba(255,255,255,0.03); }
+    .rank-1 { color: var(--star); font-weight: 700; }
+    .my-row { background: rgba(59,130,246,0.12); }
+
+    /* Admin */
+    .admin-game-row {
+      display: grid; grid-template-columns: 40px 1fr 1fr 90px 100px 90px 1fr auto;
+      gap: 0.4rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .admin-game-row input, .admin-game-row select { padding: 0.35rem 0.45rem; font-size: 0.85rem; }
+
+    /* Mobile: stack the two teams vertically */
+    @media (max-width: 800px) {
+      .admin-game-row { grid-template-columns: 1fr 1fr; }
+      .form-row-inline { grid-template-columns: 1fr; }
+      .game-body {
+        grid-template-columns: 1fr;
+        gap: 0.35rem;
+      }
+      .vs { display: none; }
+    }
+
+    .auth-box { max-width: 400px; margin: 3rem auto; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .tabs button { flex: 1; }
+    .view-section { display: none; }
+    .view-section.active { display: block; }
+  </style>
+</head>
+<body>
+  <nav class="nav" id="main-nav">
+    <div class="nav-brand">🏈 College Pick'em</div>
+    <div class="nav-links" id="nav-links">
+      <button data-view="picks" class="active">My Picks</button>
+      <button data-view="others">Others' Picks</button>
+      <button data-view="standings">Standings</button>
+      <button data-view="admin">Admin</button>
+    </div>
+    <div class="nav-user" id="nav-user">
+      <span id="user-display"></span>
+      <button id="logout-btn" class="btn-sm btn-outline">Logout</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <!-- AUTH -->
+    <div id="view-auth" class="view-section">
+      <div class="auth-box card">
+        <h1 style="text-align:center;margin-bottom:1rem;">College Pick'em 2026</h1>
+        <div class="tabs">
+          <button class="btn" id="tab-login">Login</button>
+          <button class="btn btn-outline" id="tab-register">Create Account</button>
+        </div>
+        <div id="login-form">
+          <div class="form-row">
+            <label>Email</label>
+            <input type="email" id="login-email" placeholder="you@email.com">
+          </div>
+          <div class="form-row">
+            <label>Password</label>
+            <input type="password" id="login-password" placeholder="••••••••">
+          </div>
+          <button class="btn" style="width:100%" id="do-login">Login</button>
+          <p class="error hidden" id="login-error"></p>
+        </div>
+        <div id="register-form" class="hidden">
+          <div class="form-row">
+            <label>Display Name</label>
+            <input type="text" id="reg-name" placeholder="Your name">
+          </div>
+          <div class="form-row">
+            <label>Email</label>
+            <input type="email" id="reg-email" placeholder="you@email.com">
+          </div>
+          <div class="form-row">
+            <label>Password</label>
+            <input type="password" id="reg-password" placeholder="Min 6 characters">
+          </div>
+          <button class="btn" style="width:100%" id="do-register">Create Account</button>
+          <p class="error hidden" id="reg-error"></p>
+        </div>
+        <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border);text-align:center;">
+          <button class="btn btn-outline" style="width:100%" id="do-demo">Demo</button>
+          <p style="margin-top:0.6rem;font-size:0.8rem;color:var(--muted);">
+            Skip login and explore as <strong>Demo User</strong>
+          </p>
+        </div>
+        <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);text-align:center;">
+          Simple email + password for a small trusted group. Data stored in this browser (prototype).
+        </p>
+      </div>
+    </div>
+
+    <!-- MY PICKS (entry) -->
+    <div id="view-picks" class="view-section">
+      <h1>Week 0 Picks</h1>
+      <p class="subtitle">Saturday Aug 29 – Friday Sep 4, 2026 · Against the spread · Times in CT</p>
+      <div id="picks-games"></div>
+      <div class="card" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
+        <h3 style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
+          Tiebreaker · NC State @ Virginia Total
+        </h3>
+        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+          <label style="margin:0;font-size:0.85rem;color:var(--muted);">Predicted Total Points</label>
+          <input type="number" id="total-points-bottom" min="0" max="150" step="1" placeholder="e.g. 52"
+                 style="width:110px;text-align:center;font-weight:700;font-size:1.1rem;">
+          <span class="total-line">Line: <strong id="bottom-total-line">O/U 54.5</strong></span>
+        </div>
+        <p id="tb-lock-hint" class="hidden" style="font-size:0.8rem;color:var(--locked);margin-top:0.5rem;"></p>
+      </div>
+      <div class="card star-card" style="margin-top:1rem;">
+        <h3><span>★</span> 5★ Guarantee Pick</h3>
+        <select id="five-star-select"><option value="">— Select your most confident cover —</option></select>
+        <p style="font-size:0.8rem;color:var(--muted);margin-top:0.4rem;">Team you are most confident will cover the spread.</p>
+      </div>
+      <div class="status-bar">
+        <div class="status-text">
+          <span id="picked-count">0</span>/<span id="total-games">20</span> open games picked
+          · Total: <span id="total-status">needed</span>
+          · 5★: <span id="star-status">needed</span>
+        </div>
+        <p class="hidden" id="locked-hint" style="font-size:0.8rem;color:var(--muted);margin-bottom:0.4rem;"></p>
+        <p class="success-msg hidden" id="save-flash" style="margin-bottom:0.6rem;font-weight:600;">Picks saved successfully</p>
+        <button class="btn" id="submit-btn" disabled>Save Picks</button>
+      </div>
+    </div>
+
+    <!-- OTHERS' PICKS -->
+    <div id="view-others" class="view-section">
+      <h1>Others' Picks – Week 0</h1>
+      <p class="subtitle">Picks become visible after that game’s kickoff. Live scores shown when available.</p>
+      <div id="others-content"></div>
+    </div>
+
+    <!-- STANDINGS -->
+    <div id="view-standings" class="view-section">
+      <h1>Standings</h1>
+      <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+        <button class="btn btn-sm" id="stand-week" class="active">Current Week</button>
+        <button class="btn btn-sm btn-outline" id="stand-overall">Overall Season</button>
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Player</th><th>Record</th><th>Points</th><th>5★</th></tr>
+          </thead>
+          <tbody id="standings-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ADMIN -->
+    <div id="view-admin" class="view-section">
+      <h1>Admin – Week Slate</h1>
+      <p class="subtitle">Set games, metadata, and pull odds. (Odds auto-fetch is mocked in this prototype.)</p>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+          <strong>Week 0 Games</strong>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="btn btn-sm" id="admin-fetch-scores">↻ Refresh Scores (ESPN)</button>
+            <button class="btn btn-sm btn-outline" id="admin-fetch-odds">↻ Odds (mock)</button>
+            <button class="btn btn-sm btn-outline" id="admin-add-game">+ Add Game</button>
+          </div>
+        </div>
+        <div id="admin-games-list"></div>
+        <div style="margin-top:1rem;">
+          <button class="btn" id="admin-save">Save Slate</button>
+          <span class="success-msg hidden" id="admin-save-msg">Slate saved.</span>
+        </div>
+      </div>
+      <div class="card" style="margin-top:1rem;">
+        <h3 style="margin-bottom:0.75rem;font-size:1rem;">Notes for production</h3>
+        <ul style="font-size:0.85rem;color:var(--muted);padding-left:1.2rem;">
+          <li>Odds: call ESPN Core API, The Odds API, or DraftKings public endpoints from a backend, then store line + source + timestamp.</li>
+          <li>Live scores: ESPN Scoreboard API or similar; poll every 30–60s while games are live.</li>
+          <li>Auth: replace localStorage with a real DB + hashed passwords (e.g. bcrypt) and session cookies / JWT.</li>
+          <li>Lock logic: compare server UTC time to each game’s kickoff; never trust client clock alone.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- DATA ----------
+    // Kickoff times are approximate UTC for demo lock logic. Adjust as needed.
+    const DEFAULT_GAMES = [
+      { id: 1,  time: "11:00 AM", tv: "ESPN",               away: "North Carolina",    home: "TCU",                odds: -6.5,  date: "2026-08-29", kickoff: "2026-08-29T16:00:00Z", notes: "Dublin, Ireland – Aer Lingus Classic", isTiebreaker: false, totalLine: null },
+      { id: 2,  time: "2:00 PM",  tv: "NBC",                away: "San Jose State",    home: "USC",                odds: -35.5, date: "2026-08-29", kickoff: "2026-08-29T19:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 3,  time: "2:30 PM",  tv: "ESPN",               away: "NC State",          home: "Virginia",           odds: -5.5,  date: "2026-08-29", kickoff: "2026-08-29T19:30:00Z", notes: "Primary Tiebreaker – Predict Total Points", isTiebreaker: true, totalLine: 54.5 },
+      { id: 4,  time: "4:30 PM",  tv: "CBS Sports Network", away: "Jacksonville State",home: "North Dakota State", odds: -7.5,  date: "2026-08-29", kickoff: "2026-08-29T21:30:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 5,  time: "5:30 PM",  tv: "ESPN+",              away: "Sacramento State",  home: "Eastern Michigan",   odds: -8.5,  date: "2026-08-29", kickoff: "2026-08-29T22:30:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 6,  time: "6:00 PM",  tv: "ACC Network",        away: "Hawaii",            home: "Stanford",           odds: -3.5,  date: "2026-08-29", kickoff: "2026-08-29T23:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 7,  time: "6:00 PM",  tv: "CW",                 away: "New Mexico State",  home: "Florida State",      odds: -30.5, date: "2026-08-29", kickoff: "2026-08-29T23:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 8,  time: "9:00 PM",  tv: "FOX",                away: "Memphis",           home: "UNLV",               odds: -5.5,  date: "2026-08-29", kickoff: "2026-08-30T02:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 9,  time: "5:00 PM",  tv: "Big Ten Network",    away: "UMass",             home: "Rutgers",            odds: -30.5, date: "2026-09-03", kickoff: "2026-09-03T22:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 10, time: "6:00 PM",  tv: "ACC Network",        away: "Akron",             home: "Wake Forest",        odds: -22.5, date: "2026-09-03", kickoff: "2026-09-03T23:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 11, time: "7:00 PM",  tv: "ESPN",               away: "Colorado",          home: "Georgia Tech",       odds: -6.5,  date: "2026-09-03", kickoff: "2026-09-04T00:00:00Z", notes: "2nd Tiebreaker", isTiebreaker: false, totalLine: null },
+      { id: 12, time: "8:00 PM",  tv: "Big Ten Network",    away: "UAB",               home: "Illinois",           odds: -27.5, date: "2026-09-03", kickoff: "2026-09-04T01:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 13, time: "5:30 PM",  tv: "ESPN+",              away: "San Jose State",    home: "Eastern Michigan",   odds: -3.5,  date: "2026-09-04", kickoff: "2026-09-04T22:30:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 14, time: "7:00 PM",  tv: "Fox Sports 1",       away: "Toledo",            home: "Michigan State",     odds: -10.5, date: "2026-09-04", kickoff: "2026-09-05T00:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 15, time: "7:00 PM",  tv: "SEC Network+",       away: "UTEP",              home: "Oklahoma",           odds: -40.5, date: "2026-09-04", kickoff: "2026-09-05T00:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 16, time: "8:00 PM",  tv: "Fox",                away: "Fresno State",      home: "USC",                odds: -23.5, date: "2026-09-04", kickoff: "2026-09-05T01:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 17, time: "8:00 PM",  tv: "ESPN",               away: "Miami FL",          home: "Stanford",           odds: 23.5,  date: "2026-09-04", kickoff: "2026-09-05T01:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 18, time: "8:00 PM",  tv: "ESPNU",              away: "Idaho",             home: "Utah",               odds: -37.5, date: "2026-09-03", kickoff: "2026-09-04T01:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 19, time: "7:00 PM",  tv: "Peacock",            away: "Eastern Illinois",  home: "Minnesota",          odds: -41.5, date: "2026-09-03", kickoff: "2026-09-04T00:00:00Z", notes: "", isTiebreaker: false, totalLine: null },
+      { id: 20, time: "6:00 PM",  tv: "Big Ten Network",    away: "Indiana State",     home: "Purdue",             odds: -34.5, date: "2026-09-04", kickoff: "2026-09-04T23:00:00Z", notes: "", isTiebreaker: false, totalLine: null }
+    ];
+
+    // Simulated live scores (null = not started). In production these come from an API.
+    const LIVE_SCORES = {
+      // example once games start: 1: { away: 14, home: 10, status: 'LIVE 2Q' }
+    };
+
+    // Mock other users for demo
+    const MOCK_OTHERS = [
+      { name: "Blake Kleinmeyer", picks: {}, total: 52, star: "TCU" },
+      { name: "Kelly Allsup", picks: {}, total: 55, star: "Virginia" },
+      { name: "Shane Serbousek", picks: {}, total: 48, star: "Florida State" }
+    ];
+
+    // ---------- SAFE STORAGE (works when localStorage is blocked by sandbox) ----------
+    const _mem = {};
+    let _storageAvailable = false;
+    try {
+      const k = '__pickem_test__';
+      window.localStorage.setItem(k, '1');
+      window.localStorage.removeItem(k);
+      _storageAvailable = true;
+    } catch (e) {
+      _storageAvailable = false;
+    }
+    function storeGet(key) {
+      if (_storageAvailable) {
+        try { return window.localStorage.getItem(key); } catch (e) { /* fall through */ }
+      }
+      return _mem[key] ?? null;
+    }
+    function storeSet(key, val) {
+      if (_storageAvailable) {
+        try { window.localStorage.setItem(key, val); return; } catch (e) { /* fall through */ }
+      }
+      _mem[key] = val;
+    }
+    function storeRemove(key) {
+      if (_storageAvailable) {
+        try { window.localStorage.removeItem(key); } catch (e) { /* fall through */ }
+      }
+      delete _mem[key];
+    }
+
+    // ---------- STATE ----------
+    let currentUser = null;
+    let games = (() => {
+      try {
+        const raw = storeGet('pickem_games');
+        return raw ? JSON.parse(raw) : structuredClone(DEFAULT_GAMES);
+      } catch (e) {
+        return structuredClone(DEFAULT_GAMES);
+      }
+    })();
+    let myPicks = {};       // { [gameId]: 'away'|'home' }
+    let myTotal = null;
+    let myStar = '';
+    let submitted = false;
+
+    // ---------- HELPERS ----------
+    function saveUsers(users) { storeSet('pickem_users', JSON.stringify(users)); }
+    function loadUsers() {
+      try { return JSON.parse(storeGet('pickem_users') || '{}'); }
+      catch (e) { return {}; }
+    }
+    function saveSession(email) { storeSet('pickem_session', email); }
+    function clearSession() { storeRemove('pickem_session'); }
+    function getSession() { return storeGet('pickem_session'); }
+
+    // App timezone for display (group is primarily US Central / Iowa)
+    const APP_TZ = 'America/Chicago';
+
+    function isLocked(game) {
+      if (!game || !game.kickoff) return false;
+      const kick = new Date(game.kickoff);
+      if (isNaN(kick.getTime())) return false;
+      // Compare absolute instants (UTC). Client clock is used; for production
+      // prefer server time via Supabase rpc if clock skew becomes an issue.
+      return Date.now() >= kick.getTime();
+    }
+
+    function formatOdds(o) { return o > 0 ? `+${o}` : String(o); }
+
+    function formatInAppTz(isoOrDate, opts) {
+      const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+      if (isNaN(d.getTime())) return '';
+      return new Intl.DateTimeFormat('en-US', { timeZone: APP_TZ, ...opts }).format(d);
+    }
+
+    /** e.g. "August 29, 2026" in Central */
+    function formatGameDate(d) {
+      if (!d) return '';
+      // Prefer kickoff instant when caller passes ISO datetime
+      if (String(d).includes('T') || d instanceof Date) {
+        return formatInAppTz(d, { month: 'long', day: 'numeric', year: 'numeric' });
+      }
+      // Plain YYYY-MM-DD → calendar date (no TZ shift of the day label)
+      const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!m) return d;
+      const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      return `${months[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}`;
+    }
+
+    /** Kickoff time in Central, e.g. "10:00 AM CT" */
+    function formatGameTime(game) {
+      if (game && game.kickoff) {
+        const t = formatInAppTz(game.kickoff, { hour: 'numeric', minute: '2-digit', hour12: true });
+        return t ? `${t} CT` : (game.time || '');
+      }
+      return game && game.time ? `${game.time}` : '';
+    }
+
+    /** Date from kickoff in Central when available */
+    function formatGameDateFromGame(game) {
+      if (game && game.kickoff) return formatGameDate(game.kickoff);
+      return formatGameDate(game && game.date);
+    }
+
+    let myPickSheetId = null;
+
+    async function loadMyData() {
+      myPicks = {}; myTotal = null; myStar = ''; submitted = false; myPickSheetId = null;
+      if (!currentUser || !activeWeekId) return;
+      try {
+        const { data: sheet, error } = await sb
+          .from('pick_sheets')
+          .select('id, total_points_guess, five_star_game_id, five_star_side, submitted_at')
+          .eq('user_id', currentUser.id)
+          .eq('week_id', activeWeekId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!sheet) return;
+
+        myPickSheetId = sheet.id;
+        myTotal = sheet.total_points_guess;
+        submitted = !!sheet.submitted_at;
+        if (sheet.five_star_game_id && sheet.five_star_side) {
+          const g = games.find(x => x.id === sheet.five_star_game_id);
+          const team = g
+            ? (sheet.five_star_side === 'away' ? g.away : g.home)
+            : '';
+          myStar = team ? `${team}|${sheet.five_star_game_id}` : '';
+        }
+
+        const { data: pickRows, error: pErr } = await sb
+          .from('picks')
+          .select('game_id, selection')
+          .eq('pick_sheet_id', sheet.id);
+        if (pErr) throw pErr;
+        (pickRows || []).forEach(p => {
+          myPicks[p.game_id] = p.selection;
+        });
+      } catch (e) {
+        console.error('loadMyData failed', e);
+      }
+    }
+
+    async function saveMyData() {
+      if (!currentUser || !activeWeekId) {
+        alert('Not logged in or no active week.');
+        return false;
+      }
+      try {
+        applyLockedDefaults();
+
+        // Parse 5★ → game id + side
+        let fiveStarGameId = null;
+        let fiveStarSide = null;
+        if (myStar) {
+          const [team, gameId] = myStar.split('|');
+          fiveStarGameId = gameId || null;
+          const g = games.find(x => x.id === fiveStarGameId);
+          if (g) fiveStarSide = (team === g.away) ? 'away' : 'home';
+        }
+
+        const sheetPayload = {
+          user_id: currentUser.id,
+          week_id: activeWeekId,
+          total_points_guess: myTotal,
+          five_star_game_id: fiveStarGameId,
+          five_star_side: fiveStarSide,
+          submitted_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        let sheetId = myPickSheetId;
+        if (sheetId) {
+          const { error } = await sb
+            .from('pick_sheets')
+            .update(sheetPayload)
+            .eq('id', sheetId);
+          if (error) throw error;
+        } else {
+          const { data, error } = await sb
+            .from('pick_sheets')
+            .insert(sheetPayload)
+            .select('id')
+            .single();
+          if (error) throw error;
+          sheetId = data.id;
+          myPickSheetId = sheetId;
+        }
+
+        // Upsert each pick
+        const pickRows = Object.keys(myPicks).map(gameId => ({
+          pick_sheet_id: sheetId,
+          game_id: gameId,
+          selection: myPicks[gameId],
+          is_auto_default: isLocked(games.find(g => g.id === gameId) || {}) && myPicks[gameId] === 'away',
+          updated_at: new Date().toISOString()
+        }));
+
+        if (pickRows.length) {
+          const { error: upErr } = await sb
+            .from('picks')
+            .upsert(pickRows, { onConflict: 'pick_sheet_id,game_id' });
+          if (upErr) throw upErr;
+        }
+
+        submitted = true;
+        return true;
+      } catch (e) {
+        console.error('saveMyData failed', e);
+        alert('Could not save picks: ' + (e.message || e));
+        return false;
+      }
+    }
+
+    // 5★ options: only teams from games that have NOT kicked off yet.
+    // If the user already has a 5★ on a now-locked game, that option is still
+    // included so it can display, but the dropdown will be disabled.
+    function fiveStarOptions(includeLockedSelected) {
+      const opts = [];
+      games.forEach(g => {
+        const locked = isLocked(g);
+        if (locked && !includeLockedSelected) return;
+        opts.push({
+          value: `${g.away}|${g.id}`,
+          label: `${g.away} ${formatOdds(-g.odds)}`,
+          team: g.away,
+          gameId: g.id,
+          locked
+        });
+        opts.push({
+          value: `${g.home}|${g.id}`,
+          label: `${g.home} ${formatOdds(g.odds)}`,
+          team: g.home,
+          gameId: g.id,
+          locked
+        });
+      });
+      // If includeLockedSelected and current myStar is on a locked game, ensure it's present
+      if (includeLockedSelected && myStar) {
+        const exists = opts.some(o => o.value === myStar);
+        if (!exists) {
+          const [team, idStr] = myStar.split('|');
+          const g = games.find(x => x.id === parseInt(idStr, 10));
+          if (g) {
+            const isAway = team === g.away;
+            opts.push({
+              value: myStar,
+              label: `${team} ${formatOdds(isAway ? -g.odds : g.odds)}`,
+              team,
+              gameId: g.id,
+              locked: true
+            });
+          }
+        }
+      }
+      opts.sort((a, b) => a.label.localeCompare(b.label));
+      return opts;
+    }
+
+    function isFiveStarLocked() {
+      if (!myStar) return false;
+      const id = myStar.split('|')[1];
+      const g = games.find(x => x.id === id);
+      return g ? isLocked(g) : false;
+    }
+
+    // ---------- AUTH ----------
+    function showView(name) {
+      document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
+      const el = document.getElementById('view-' + name);
+      if (el) el.classList.add('active');
+      document.querySelectorAll('#nav-links button').forEach(b => {
+        b.classList.toggle('active', b.dataset.view === name);
+      });
+    }
+
+    // ---------- SUPABASE ----------
+    const SUPABASE_URL = 'https://jyizyseevblnrgmqqzoc.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5aXp5c2VldmJsbnJnbXFxem9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1OTg3NTYsImV4cCI6MjEwMTE3NDc1Nn0.OPt13Z-hhCXTaMYZB7IGBRXqhBo-vHMJxcRyxy3pYSw';
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let activeWeekId = null;
+
+    async function loadGamesFromSupabase() {
+      try {
+        const { data: week, error: weekErr } = await sb
+          .from('weeks')
+          .select('id, label')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        if (weekErr) throw weekErr;
+        if (!week) {
+          console.warn('No active week');
+          games = [];
+          activeWeekId = null;
+          return;
+        }
+        activeWeekId = week.id;
+
+        const { data: rows, error } = await sb
+          .from('games')
+          .select('*')
+          .eq('week_id', week.id)
+          .order('sort_order');
+        if (error) throw error;
+
+        games = (rows || []).map((g, idx) => ({
+          id: g.id,
+          num: g.sort_order || idx + 1,
+          time: g.game_time || '',
+          tv: g.tv || '',
+          away: g.away_team,
+          home: g.home_team,
+          odds: Number(g.odds),
+          date: g.game_date || '',
+          kickoff: g.kickoff_at,
+          notes: g.notes || '',
+          isTiebreaker: !!g.is_tiebreaker,
+          totalLine: g.total_line != null ? Number(g.total_line) : null,
+          away_score: g.away_score,
+          home_score: g.home_score,
+          status: g.status
+        }));
+        // Reflect stored scores in the live score map used by the UI
+        games.forEach(g => {
+          if (g.away_score != null && g.home_score != null) {
+            LIVE_SCORES[g.id] = {
+              away: g.away_score,
+              home: g.home_score,
+              status: g.status === 'final' ? 'FINAL' : (g.status === 'live' ? 'LIVE' : g.status)
+            };
+          }
+        });
+        console.log('Loaded games:', games.length);
+      } catch (e) {
+        console.error('loadGamesFromSupabase failed', e);
+        games = [];
+        alert('Could not load games: ' + (e.message || e));
+      }
+    }
+
+    async function setLoggedIn(user) {
+      try {
+        currentUser = user;
+        document.getElementById('main-nav').style.display = user ? 'flex' : 'none';
+        document.getElementById('user-display').textContent = user ? (user.name || user.email || '') : '';
+        if (user) {
+          await loadGamesFromSupabase();
+          await loadMyData();
+          showView('picks');
+          renderAll();
+        } else {
+          games = [];
+          myPicks = {};
+          myTotal = null;
+          myStar = '';
+          submitted = false;
+          showView('auth');
+        }
+      } catch (e) {
+        console.error('setLoggedIn error', e);
+        showView(user ? 'picks' : 'auth');
+      }
+    }
+
+    document.getElementById('tab-login').onclick = () => {
+      document.getElementById('login-form').classList.remove('hidden');
+      document.getElementById('register-form').classList.add('hidden');
+      document.getElementById('tab-login').classList.add('btn'); document.getElementById('tab-login').classList.remove('btn-outline');
+      document.getElementById('tab-register').classList.add('btn-outline'); document.getElementById('tab-register').classList.remove('btn');
+    };
+    document.getElementById('tab-register').onclick = () => {
+      document.getElementById('register-form').classList.remove('hidden');
+      document.getElementById('login-form').classList.add('hidden');
+      document.getElementById('tab-register').classList.add('btn'); document.getElementById('tab-register').classList.remove('btn-outline');
+      document.getElementById('tab-login').classList.add('btn-outline'); document.getElementById('tab-login').classList.remove('btn');
+    };
+
+    document.getElementById('do-register').onclick = async () => {
+      const name = document.getElementById('reg-name').value.trim();
+      const email = document.getElementById('reg-email').value.trim().toLowerCase();
+      const pass = document.getElementById('reg-password').value;
+      const err = document.getElementById('reg-error');
+      err.classList.add('hidden');
+      if (!name || !email || pass.length < 6) {
+        err.textContent = 'Name, valid email, and password (6+ chars) required.';
+        err.classList.remove('hidden'); return;
+      }
+      const { data, error } = await sb.auth.signUp({
+        email,
+        password: pass,
+        options: { data: { display_name: name } }
+      });
+      if (error) {
+        err.textContent = error.message;
+        err.classList.remove('hidden'); return;
+      }
+      // Ensure profile display name
+      if (data.user) {
+        await sb.from('profiles').update({ display_name: name }).eq('id', data.user.id);
+        await setLoggedIn({ id: data.user.id, name, email });
+      } else {
+        err.textContent = 'Check your email to confirm, then log in.';
+        err.classList.remove('hidden');
+      }
+    };
+
+    document.getElementById('do-login').onclick = async () => {
+      const email = document.getElementById('login-email').value.trim().toLowerCase();
+      const pass = document.getElementById('login-password').value;
+      const err = document.getElementById('login-error');
+      err.classList.add('hidden');
+      const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+      if (error) {
+        err.textContent = error.message;
+        err.classList.remove('hidden'); return;
+      }
+      const { data: profile } = await sb
+        .from('profiles')
+        .select('display_name, is_admin')
+        .eq('id', data.user.id)
+        .maybeSingle();
+      await setLoggedIn({
+        id: data.user.id,
+        name: profile?.display_name || email.split('@')[0],
+        email,
+        isAdmin: !!profile?.is_admin
+      });
+    };
+
+    document.getElementById('do-demo').onclick = () => {
+      alert('Demo mode is disabled now that Supabase is connected.\n\nLog in with your real account (andypierce32@gmail.com).');
+    };
+
+    document.getElementById('logout-btn').onclick = async () => {
+      try {
+        await sb.auth.signOut();
+      } catch (e) {
+        console.error('signOut error', e);
+      }
+      currentUser = null;
+      games = [];
+      myPicks = {};
+      myTotal = null;
+      myStar = '';
+      submitted = false;
+      document.getElementById('main-nav').style.display = 'none';
+      document.getElementById('user-display').textContent = '';
+      showView('auth');
+    };
+
+    // Nav
+    document.querySelectorAll('#nav-links button').forEach(btn => {
+      btn.onclick = () => {
+        const v = btn.dataset.view;
+        if (v === 'others') renderOthers();
+        if (v === 'standings') renderStandings('week');
+        if (v === 'admin') renderAdmin();
+        if (v === 'picks') renderPicksEntry();
+        showView(v);
+      };
+    });
+
+    // Auto-pick away team for any locked game the user never selected
+    function applyLockedDefaults() {
+      games.forEach(g => {
+        if (isLocked(g) && !myPicks[g.id]) {
+          myPicks[g.id] = 'away';
+        }
+      });
+    }
+
+    // ---------- RENDER PICKS ENTRY ----------
+    function renderPicksEntry() {
+      applyLockedDefaults();
+      const container = document.getElementById('picks-games');
+      container.innerHTML = '';
+      if (!games.length) {
+        container.innerHTML = '<p class="subtitle">No games loaded. Check that Week 0 is active and your account can read the games table. Open the browser console (F12) for details.</p>';
+        return;
+      }
+      games.forEach(g => {
+        const locked = isLocked(g);
+        const sel = myPicks[g.id] || null;
+        const card = document.createElement('div');
+        card.className = 'game-card' + (g.isTiebreaker ? ' tiebreaker-game' : '') + (locked ? ' locked' : '');
+        card.dataset.id = g.id;
+        const score = LIVE_SCORES[g.id];
+        card.innerHTML = `
+          <div class="game-header">
+            <span>Game ${g.num || ''} · ${formatGameTime(g)}</span>
+            <span class="tv">${g.tv}</span>
+            <span>${formatGameDateFromGame(g)}</span>
+            ${g.isTiebreaker ? '<span class="tiebreaker-badge">Total Points TB</span>' : ''}
+            ${locked ? '<span class="lock-badge">LOCKED</span>' : ''}
+            ${score ? `<span class="live-badge">${score.status || 'LIVE'}</span>` : ''}
+          </div>
+          <div class="game-body">
+            <div class="team away ${sel==='away'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
+              <span class="marker">•</span>
+              <span class="team-name">${g.away}</span>
+              ${score ? `<span class="team-score">${score.away}</span>` : ''}
+              <span class="team-line">${formatOdds(-g.odds)}</span>
+            </div>
+            <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
+            <div class="team home ${sel==='home'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
+              <span class="marker">•</span>
+              <span class="team-name">${g.home}</span>
+              ${score ? `<span class="team-score">${score.home}</span>` : ''}
+              <span class="team-line">${formatOdds(g.odds)}</span>
+            </div>
+          </div>
+          ${g.notes ? `<div class="notes">${g.notes}</div>` : ''}
+          ${g.isTiebreaker ? `
+            <div class="total-input-wrap">
+              <label>Predicted Total Points (NC State + Virginia)</label>
+              <input type="number" id="total-points" min="0" max="150" step="1" placeholder="e.g. 52"
+                     value="${myTotal !== null ? myTotal : ''}" ${locked ? 'disabled' : ''}>
+              <span class="total-line">Line: <strong>O/U ${g.totalLine}</strong></span>
+            </div>` : ''}
+        `;
+        container.appendChild(card);
+      });
+
+      container.querySelectorAll('.team:not(.disabled)').forEach(el => {
+        el.onclick = () => {
+          const id = el.dataset.id; // UUID string from Supabase
+          myPicks[id] = el.dataset.side;
+          const card = container.querySelector(`.game-card[data-id="${id}"]`);
+          if (card) {
+            card.querySelectorAll('.team').forEach(t => t.classList.toggle('selected', t.dataset.side === myPicks[id]));
+          }
+          updateEntryStatus();
+        };
+      });
+
+      // Sync both total-points inputs (in-game + bottom)
+      function setTotalFromInput(val) {
+        myTotal = val === '' ? null : parseInt(val, 10);
+        const top = document.getElementById('total-points');
+        const bottom = document.getElementById('total-points-bottom');
+        const display = (myTotal !== null && !isNaN(myTotal)) ? String(myTotal) : '';
+        if (top && top.value !== display) top.value = display;
+        if (bottom && bottom.value !== display) bottom.value = display;
+        updateEntryStatus();
+      }
+      const tbGame = games.find(g => g.isTiebreaker);
+      const tbLocked = tbGame ? isLocked(tbGame) : false;
+
+      const tot = document.getElementById('total-points');
+      if (tot) {
+        if (myTotal !== null && !isNaN(myTotal)) tot.value = myTotal;
+        tot.disabled = tbLocked;
+        tot.oninput = () => {
+          if (tbLocked) return;
+          setTotalFromInput(tot.value.trim());
+        };
+      }
+      const totBottom = document.getElementById('total-points-bottom');
+      if (totBottom) {
+        if (myTotal !== null && !isNaN(myTotal)) totBottom.value = myTotal;
+        totBottom.disabled = tbLocked;
+        totBottom.oninput = () => {
+          if (tbLocked) return;
+          setTotalFromInput(totBottom.value.trim());
+        };
+        const lineEl = document.getElementById('bottom-total-line');
+        if (tbGame && lineEl) lineEl.textContent = `O/U ${tbGame.totalLine}`;
+      }
+      const tbHint = document.getElementById('tb-lock-hint');
+      if (tbHint) {
+        if (tbLocked) {
+          tbHint.textContent = myTotal !== null && !isNaN(myTotal)
+            ? 'Tiebreaker locked — NC State @ Virginia has started. Your total is saved.'
+            : 'Tiebreaker locked — NC State @ Virginia has started. No total was entered.';
+          tbHint.classList.remove('hidden');
+        } else {
+          tbHint.classList.add('hidden');
+        }
+      }
+
+      // 5★ dropdown — only open games; locked once that team's game starts
+      const sel = document.getElementById('five-star-select');
+      const prev = myStar;
+      const starLocked = isFiveStarLocked();
+      sel.innerHTML = '<option value="">— Select your most confident cover —</option>';
+      fiveStarOptions(true).forEach(opt => {
+        // Hide locked options unless it's the user's current selection
+        if (opt.locked && opt.value !== prev) return;
+        const o = document.createElement('option');
+        o.value = opt.value;
+        o.textContent = opt.label + (opt.locked ? ' (locked)' : '');
+        if (opt.value === prev) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.disabled = starLocked;
+      sel.onchange = () => {
+        if (isFiveStarLocked()) return; // shouldn't fire when disabled
+        myStar = sel.value;
+        updateEntryStatus();
+      };
+      // Hint under the dropdown
+      let starHint = document.getElementById('star-lock-hint');
+      if (!starHint) {
+        starHint = document.createElement('p');
+        starHint.id = 'star-lock-hint';
+        starHint.style.cssText = 'font-size:0.8rem;color:var(--muted);margin-top:0.4rem;';
+        sel.parentElement.appendChild(starHint);
+      }
+      if (starLocked) {
+        starHint.textContent = '5★ is locked — that team’s game has already started.';
+        starHint.style.color = 'var(--locked)';
+      } else {
+        starHint.textContent = 'Only teams from games that have not started are available.';
+        starHint.style.color = 'var(--muted)';
+      }
+
+      updateEntryStatus();
+    }
+
+    function updateEntryStatus() {
+      applyLockedDefaults();
+      const openGames = games.filter(g => !isLocked(g));
+      const openPicked = openGames.filter(g => myPicks[g.id]).length;
+      const lockedCount = games.length - openGames.length;
+      document.getElementById('picked-count').textContent = openPicked;
+      document.getElementById('total-games').textContent = openGames.length;
+
+      // Total points only required if the TB game is still open
+      const tbGame = games.find(g => g.isTiebreaker);
+      const tbOpen = tbGame && !isLocked(tbGame);
+      const ts = document.getElementById('total-status');
+      if (!tbOpen) {
+        ts.textContent = myTotal !== null && !isNaN(myTotal) ? myTotal : 'n/a';
+        ts.style.color = 'var(--muted)';
+      } else if (myTotal !== null && !isNaN(myTotal)) {
+        ts.textContent = myTotal; ts.style.color = 'var(--success)';
+      } else {
+        ts.textContent = 'needed'; ts.style.color = 'var(--danger)';
+      }
+
+      const ss = document.getElementById('star-status');
+      if (myStar) {
+        const match = fiveStarOptions().find(o => o.value === myStar);
+        ss.textContent = match ? match.label : myStar;
+        ss.style.color = 'var(--star)';
+      } else {
+        ss.textContent = 'needed';
+        ss.style.color = 'var(--danger)';
+      }
+
+      const totalOk = !tbOpen || (myTotal !== null && !isNaN(myTotal));
+      const ready = openPicked === openGames.length && totalOk && !!myStar;
+      document.getElementById('submit-btn').disabled = !ready;
+
+      // Hint about locked defaults
+      const hint = document.getElementById('locked-hint');
+      if (hint) {
+        if (lockedCount > 0) {
+          hint.textContent = `${lockedCount} locked game${lockedCount > 1 ? 's' : ''} defaulted to the away team.`;
+          hint.classList.remove('hidden');
+        } else {
+          hint.classList.add('hidden');
+        }
+      }
+    }
+
+    document.getElementById('submit-btn').onclick = async () => {
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      const ok = await saveMyData();
+      btn.textContent = 'Save Picks';
+      updateEntryStatus();
+      if (ok) {
+        const flash = document.getElementById('save-flash');
+        flash.classList.remove('hidden');
+        clearTimeout(window._saveFlashTimer);
+        window._saveFlashTimer = setTimeout(() => {
+          flash.classList.add('hidden');
+        }, 3000);
+      }
+    };
+
+    // ---------- REVIEW ----------
+    function renderReview() {
+      const box = document.getElementById('review-content');
+      if (!submitted && Object.keys(myPicks).length === 0) {
+        box.innerHTML = '<p class="subtitle">You have not submitted picks yet. Go to My Picks to enter them.</p>';
+        return;
+      }
+      let html = '';
+      games.forEach(g => {
+        const locked = isLocked(g);
+        const sel = myPicks[g.id];
+        const team = sel === 'away' ? g.away : (sel === 'home' ? g.home : '—');
+        const score = LIVE_SCORES[g.id];
+        html += `
+          <div class="game-card ${g.isTiebreaker ? 'tiebreaker-game' : ''} ${locked ? 'locked' : ''}" data-id="${g.id}">
+            <div class="game-header">
+              <span>Game ${g.id} · ${g.time} · ${g.tv}</span>
+              ${locked ? '<span class="lock-badge">LOCKED at kickoff</span>' : '<span style="color:var(--success);font-size:0.75rem;">Editable</span>'}
+              ${score ? `<span class="live-badge">${score.status}</span>` : ''}
+            </div>
+            <div class="game-body">
+              <div class="team away ${sel==='away'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
+                <span class="marker">•</span>
+                <span class="team-name">${g.away}</span>
+                ${score ? `<span class="team-score">${score.away}</span>` : ''}
+                <span class="team-line">${formatOdds(-g.odds)}</span>
+              </div>
+              <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
+              <div class="team home ${sel==='home'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
+                <span class="marker">•</span>
+                <span class="team-name">${g.home}</span>
+                ${score ? `<span class="team-score">${score.home}</span>` : ''}
+                <span class="team-line">${formatOdds(g.odds)}</span>
+              </div>
+            </div>
+            ${g.isTiebreaker ? `
+              <div class="total-input-wrap">
+                <label>Predicted Total</label>
+                <input type="number" class="rev-total" min="0" max="150" value="${myTotal ?? ''}" ${locked?'disabled':''}>
+                <span class="total-line">Line: <strong>O/U ${g.totalLine}</strong></span>
+              </div>` : ''}
+          </div>`;
+      });
+      html += `
+        <div class="card star-card">
+          <h3><span>★</span> 5★ Guarantee Pick</h3>
+          <select id="rev-star" ${games.every(isLocked) ? 'disabled' : ''}>
+            <option value="">—</option>
+            ${fiveStarOptions().map(opt =>
+              `<option value="${opt.value}" ${opt.value===myStar?'selected':''}>${opt.label}</option>`
+            ).join('')}
+          </select>
+        </div>`;
+      box.innerHTML = html;
+
+      box.querySelectorAll('.team:not(.disabled)').forEach(el => {
+        el.onclick = () => {
+          const id = el.dataset.id;
+          myPicks[id] = el.dataset.side;
+          const card = box.querySelector(`.game-card[data-id="${id}"]`);
+          if (card) {
+            card.querySelectorAll('.team').forEach(t => t.classList.toggle('selected', t.dataset.side === myPicks[id]));
+          }
+        };
+      });
+      const totIn = box.querySelector('.rev-total');
+      if (totIn) totIn.oninput = () => { myTotal = totIn.value === '' ? null : parseInt(totIn.value, 10); };
+      const starSel = document.getElementById('rev-star');
+      if (starSel) starSel.onchange = () => { myStar = starSel.value; };
+    }
+
+    // ---------- OTHERS ----------
+    let othersCache = null;
+
+    async function renderOthers() {
+      const box = document.getElementById('others-content');
+      box.innerHTML = '<p class="subtitle">Loading players…</p>';
+
+      if (!activeWeekId) {
+        box.innerHTML = '<p class="subtitle">No active week.</p>';
+        return;
+      }
+
+      try {
+        const { data: sheets, error: sErr } = await sb
+          .from('pick_sheets')
+          .select('id, user_id, submitted_at, total_points_guess, five_star_game_id, five_star_side, profiles(display_name)')
+          .eq('week_id', activeWeekId)
+          .not('submitted_at', 'is', null);
+        if (sErr) throw sErr;
+
+        const sheetList = sheets || [];
+        const sheetIds = sheetList.map(s => s.id);
+        let pickRows = [];
+        if (sheetIds.length) {
+          const { data: pr, error: pErr } = await sb
+            .from('picks')
+            .select('pick_sheet_id, game_id, selection')
+            .in('pick_sheet_id', sheetIds);
+          if (pErr) throw pErr;
+          pickRows = pr || [];
+        }
+
+        const picksBySheet = {};
+        pickRows.forEach(p => {
+          if (!picksBySheet[p.pick_sheet_id]) picksBySheet[p.pick_sheet_id] = {};
+          picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
+        });
+
+        const players = sheetList.map(s => {
+          const name = s.profiles?.display_name
+            || (s.user_id === currentUser?.id ? currentUser.name : 'Player');
+          return {
+            sheetId: s.id,
+            userId: s.user_id,
+            name,
+            isYou: s.user_id === currentUser?.id,
+            totalGuess: s.total_points_guess,
+            fiveStarGameId: s.five_star_game_id,
+            fiveStarSide: s.five_star_side,
+            pickCount: Object.keys(picksBySheet[s.id] || {}).length
+          };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
+        othersCache = { players, picksBySheet };
+
+        if (!players.length) {
+          box.innerHTML = '<p class="subtitle">No one has submitted picks yet this week.</p>';
+          return;
+        }
+
+        let html = `
+          <p class="subtitle" style="margin-bottom:1rem;">
+            ${players.length} player${players.length === 1 ? '' : 's'} submitted.
+            Tap a name to see their picks (only games that have started are shown).
+          </p>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table style="margin:0;">
+              <thead><tr><th>Player</th><th>Picks in</th><th></th></tr></thead>
+              <tbody>
+        `;
+        players.forEach(p => {
+          html += `<tr style="cursor:pointer;" class="others-player-row" data-sheet="${p.sheetId}">
+            <td><strong>${p.name}</strong>${p.isYou ? ' <span style="color:var(--muted);font-size:0.8rem;">(you)</span>' : ''}</td>
+            <td>${p.pickCount}</td>
+            <td style="text-align:right;color:var(--accent);font-size:0.85rem;">View →</td>
+          </tr>`;
+        });
+        html += '</tbody></table></div><div id="others-detail" style="margin-top:1rem;"></div>';
+        box.innerHTML = html;
+
+        box.querySelectorAll('.others-player-row').forEach(row => {
+          row.onclick = () => showOtherPlayerDetail(row.dataset.sheet);
+        });
+      } catch (e) {
+        console.error('renderOthers failed', e);
+        box.innerHTML = `<p class="subtitle" style="color:var(--danger);">Could not load players: ${e.message || e}</p>`;
+      }
+    }
+
+    function showOtherPlayerDetail(sheetId) {
+      const detail = document.getElementById('others-detail');
+      if (!othersCache || !detail) return;
+
+      const player = othersCache.players.find(p => p.sheetId === sheetId);
+      const picks = othersCache.picksBySheet[sheetId] || {};
+      if (!player) return;
+
+      const started = games.filter(g => isLocked(g));
+      const upcoming = games.filter(g => !isLocked(g));
+
+      let html = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+            <h3 style="margin:0;">${player.name}${player.isYou ? ' (you)' : ''}</h3>
+            <button class="btn btn-sm btn-outline" id="others-back-list">← All players</button>
+          </div>
+      `;
+
+      if (!started.length) {
+        html += `<p style="color:var(--muted);font-size:0.9rem;margin:0;">No games have started yet — picks stay hidden until kickoff.</p>`;
+      } else {
+        html += `<table><thead><tr><th>Game</th><th>Pick</th><th>Line</th></tr></thead><tbody>`;
+        started.forEach(g => {
+          const sel = picks[g.id];
+          const team = sel === 'away' ? g.away : sel === 'home' ? g.home : '—';
+          const line = sel === 'away' ? formatOdds(-g.odds) : sel === 'home' ? formatOdds(g.odds) : '';
+          html += `<tr>
+            <td>${g.away} @ ${g.home}</td>
+            <td><strong>${team}</strong></td>
+            <td style="color:var(--accent);">${line}</td>
+          </tr>`;
+        });
+        html += `</tbody></table>`;
+      }
+
+      const tbGame = games.find(g => g.isTiebreaker);
+      if (tbGame && isLocked(tbGame) && player.totalGuess != null) {
+        html += `<p style="margin-top:0.75rem;font-size:0.9rem;">Tiebreaker total: <strong>${player.totalGuess}</strong></p>`;
+      } else if (tbGame && !isLocked(tbGame)) {
+        html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">Tiebreaker total hidden until that game starts.</p>`;
+      }
+
+      if (player.fiveStarGameId) {
+        const fg = games.find(g => g.id === player.fiveStarGameId);
+        if (fg && isLocked(fg)) {
+          const team = player.fiveStarSide === 'away' ? fg.away : fg.home;
+          html += `<p style="font-size:0.9rem;">5★: <strong>${team}</strong> (${fg.away} @ ${fg.home})</p>`;
+        } else {
+          html += `<p style="font-size:0.85rem;color:var(--muted);">5★ hidden until that game starts.</p>`;
+        }
+      }
+
+      if (upcoming.length) {
+        html += `<p style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted);">${upcoming.length} game${upcoming.length === 1 ? '' : 's'} not started — those picks stay hidden.</p>`;
+      }
+
+      html += '</div>';
+      detail.innerHTML = html;
+      detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      const back = document.getElementById('others-back-list');
+      if (back) back.onclick = () => { detail.innerHTML = ''; };
+    }
+
+    // ---------- STANDINGS ----------
+    /** Did the selected side cover? odds is home line (e.g. -6.5). Half-points → no pushes. */
+    function coveredSpread(selection, odds, awayScore, homeScore) {
+      if (awayScore == null || homeScore == null) return null;
+      // Home covers if homeScore + odds > awayScore
+      const homeCovers = (homeScore + Number(odds)) > awayScore;
+      if (selection === 'home') return homeCovers;
+      if (selection === 'away') return !homeCovers;
+      return null;
+    }
+
+    async function renderStandings(mode) {
+      document.getElementById('stand-week').className = mode === 'week' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
+      document.getElementById('stand-overall').className = mode === 'overall' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
+      const body = document.getElementById('standings-body');
+      body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);">Loading…</td></tr>';
+
+      try {
+        // All profiles (possible entrants)
+        const { data: profiles, error: pErr } = await sb
+          .from('profiles')
+          .select('id, display_name');
+        if (pErr) throw pErr;
+
+        if (mode === 'week') {
+          if (!activeWeekId) {
+            body.innerHTML = '<tr><td colspan="5">No active week.</td></tr>';
+            return;
+          }
+
+          const { data: sheets, error: sErr } = await sb
+            .from('pick_sheets')
+            .select('id, user_id, submitted_at, five_star_game_id, five_star_side')
+            .eq('week_id', activeWeekId);
+          if (sErr) throw sErr;
+
+          const sheetByUser = {};
+          (sheets || []).forEach(s => { sheetByUser[s.user_id] = s; });
+
+          const submittedSheets = (sheets || []).filter(s => s.submitted_at);
+          const sheetIds = submittedSheets.map(s => s.id);
+          let pickRows = [];
+          if (sheetIds.length) {
+            const { data: pr, error: prErr } = await sb
+              .from('picks')
+              .select('pick_sheet_id, game_id, selection')
+              .in('pick_sheet_id', sheetIds);
+            if (prErr) throw prErr;
+            pickRows = pr || [];
+          }
+
+          const picksBySheet = {};
+          pickRows.forEach(p => {
+            if (!picksBySheet[p.pick_sheet_id]) picksBySheet[p.pick_sheet_id] = {};
+            picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
+          });
+
+          // Game results from loaded games array (scores from DB)
+          const gameById = {};
+          games.forEach(g => { gameById[g.id] = g; });
+
+          const rows = (profiles || []).map(prof => {
+            const sheet = sheetByUser[prof.id];
+            const isSub = !!(sheet && sheet.submitted_at);
+            if (!isSub) {
+              return {
+                name: prof.display_name,
+                userId: prof.id,
+                submitted: false,
+                record: '—',
+                pts: '—',
+                star: '—',
+                wins: -1
+              };
+            }
+
+            const picks = picksBySheet[sheet.id] || {};
+            let wins = 0, losses = 0, starPts = 0;
+
+            Object.keys(picks).forEach(gid => {
+              const g = gameById[gid];
+              if (!g) return;
+              const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
+              if (result === true) {
+                wins++;
+                // 5★ correct → extra point (optional bonus)
+                if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
+                  starPts = 1;
+                }
+              } else if (result === false) {
+                losses++;
+              }
+            });
+
+            const pts = wins + starPts;
+            return {
+              name: prof.display_name,
+              userId: prof.id,
+              submitted: true,
+              record: `${wins}-${losses}`,
+              pts,
+              star: starPts,
+              wins
+            };
+          });
+
+          rows.sort((a, b) => {
+            if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
+            const ap = typeof a.pts === 'number' ? a.pts : -1;
+            const bp = typeof b.pts === 'number' ? b.pts : -1;
+            if (bp !== ap) return bp - ap;
+            return a.name.localeCompare(b.name);
+          });
+
+          body.innerHTML = rows.map((r, i) => `
+            <tr class="${r.userId === currentUser?.id ? 'my-row' : ''}">
+              <td class="${i === 0 && r.submitted ? 'rank-1' : ''}">${r.submitted ? i + 1 : '—'}</td>
+              <td>${r.name}${r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'}${r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : ''}</td>
+              <td>${r.record}</td>
+              <td>${r.pts}</td>
+              <td>${r.star}</td>
+            </tr>`).join('');
+
+        } else {
+          // Overall: sum week points across all submitted sheets (all weeks)
+          const { data: allSheets, error: sErr } = await sb
+            .from('pick_sheets')
+            .select('id, user_id, week_id, submitted_at, five_star_game_id, five_star_side')
+            .not('submitted_at', 'is', null);
+          if (sErr) throw sErr;
+
+          const sheetIds = (allSheets || []).map(s => s.id);
+          let pickRows = [];
+          if (sheetIds.length) {
+            const { data: pr, error: prErr } = await sb
+              .from('picks')
+              .select('pick_sheet_id, game_id, selection')
+              .in('pick_sheet_id', sheetIds);
+            if (prErr) throw prErr;
+            pickRows = pr || [];
+          }
+
+          // Load all games with scores for overall
+          const { data: allGames, error: gErr } = await sb
+            .from('games')
+            .select('id, odds, away_score, home_score');
+          if (gErr) throw gErr;
+          const gameById = {};
+          (allGames || []).forEach(g => { gameById[g.id] = g; });
+
+          const picksBySheet = {};
+          pickRows.forEach(p => {
+            if (!picksBySheet[p.pick_sheet_id]) picksBySheet[p.pick_sheet_id] = {};
+            picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
+          });
+
+          const totals = {}; // userId -> { wins, losses, star, pts }
+          (profiles || []).forEach(p => {
+            totals[p.id] = { name: p.display_name, wins: 0, losses: 0, star: 0, pts: 0, any: false };
+          });
+
+          (allSheets || []).forEach(sheet => {
+            const t = totals[sheet.user_id];
+            if (!t) return;
+            t.any = true;
+            const picks = picksBySheet[sheet.id] || {};
+            Object.keys(picks).forEach(gid => {
+              const g = gameById[gid];
+              if (!g) return;
+              const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
+              if (result === true) {
+                t.wins++;
+                t.pts++;
+                if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
+                  t.star++;
+                  t.pts++;
+                }
+              } else if (result === false) {
+                t.losses++;
+              }
+            });
+          });
+
+          const rows = Object.keys(totals).map(uid => {
+            const t = totals[uid];
+            return {
+              userId: uid,
+              name: t.name,
+              submitted: t.any,
+              record: t.any ? `${t.wins}-${t.losses}` : '—',
+              pts: t.any ? t.pts : '—',
+              star: t.any ? t.star : '—'
+            };
+          });
+
+          rows.sort((a, b) => {
+            if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
+            const ap = typeof a.pts === 'number' ? a.pts : -1;
+            const bp = typeof b.pts === 'number' ? b.pts : -1;
+            if (bp !== ap) return bp - ap;
+            return a.name.localeCompare(b.name);
+          });
+
+          body.innerHTML = rows.map((r, i) => `
+            <tr class="${r.userId === currentUser?.id ? 'my-row' : ''}">
+              <td class="${i === 0 && r.submitted ? 'rank-1' : ''}">${r.submitted ? i + 1 : '—'}</td>
+              <td>${r.name}${r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'}${r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : ''}</td>
+              <td>${r.record}</td>
+              <td>${r.pts}</td>
+              <td>${r.star}</td>
+            </tr>`).join('');
+        }
+      } catch (e) {
+        console.error('renderStandings failed', e);
+        body.innerHTML = `<tr><td colspan="5" style="color:var(--danger);">Could not load standings: ${e.message || e}</td></tr>`;
+      }
+    }
+    document.getElementById('stand-week').onclick = () => renderStandings('week');
+    document.getElementById('stand-overall').onclick = () => renderStandings('overall');
+
+    // ---------- ADMIN ----------
+    // FBS (Wikipedia 2026) + FCS school names for admin dropdowns
+    const COLLEGE_TEAMS = [
+      // FBS
+      'Air Force','Akron','Alabama','Appalachian State','Arizona','Arizona State','Arkansas','Arkansas State','Army','Auburn',
+      'Ball State','Baylor','Boise State','Boston College','Bowling Green','Buffalo','BYU',
+      'California','Central Michigan','Charlotte','Cincinnati','Clemson','Coastal Carolina','Colorado','Colorado State',
+      'Delaware','Duke','East Carolina','Eastern Michigan','FIU','Florida','Florida Atlantic','Florida State','Fresno State',
+      'Georgia','Georgia Southern','Georgia State','Georgia Tech',
+      'Hawaii','Houston','Illinois','Indiana','Iowa','Iowa State','Jacksonville State','James Madison',
+      'Kansas','Kansas State','Kennesaw State','Kent State','Kentucky','Liberty','Louisiana','Louisiana Tech','Louisville','LSU',
+      'Marshall','Maryland','Memphis','Miami FL','Miami OH','Michigan','Michigan State','Middle Tennessee','Minnesota',
+      'Mississippi State','Missouri','Missouri State','Navy','NC State','Nebraska','Nevada','New Mexico','New Mexico State',
+      'North Carolina','North Dakota State','North Texas','Northern Illinois','Northwestern','Notre Dame',
+      'Ohio','Ohio State','Oklahoma','Oklahoma State','Old Dominion','Ole Miss','Oregon','Oregon State',
+      'Penn State','Pittsburgh','Purdue','Rice','Rutgers','Sacramento State','Sam Houston','San Diego State','San Jose State','SMU',
+      'South Alabama','South Carolina','South Florida','Southern Miss','Stanford','Syracuse',
+      'TCU','Temple','Tennessee','Texas','Texas A&M','Texas State','Texas Tech','Toledo','Troy','Tulane','Tulsa',
+      'UAB','UCF','UCLA','UConn','ULM','UMass','UNLV','USC','Utah','Utah State','UTEP','UTSA',
+      'Vanderbilt','Virginia','Virginia Tech','Wake Forest','Washington','Washington State','West Virginia',
+      'Western Kentucky','Western Michigan','Wisconsin','Wyoming',
+      // FCS (school names)
+      'Abilene Christian','Alabama A&M','Alabama State','Albany','Alcorn State','Arkansas-Pine Bluff','Austin Peay',
+      'Bethune-Cookman','Brown','Bryant','Bucknell','Butler','Cal Poly','Campbell','Central Arkansas','Central Connecticut',
+      'Charleston Southern','Chattanooga','Chicago State','The Citadel','Colgate','Columbia','Cornell','Dartmouth','Davidson',
+      'Dayton','Delaware State','Drake','Duquesne','East Tennessee State','East Texas A&M','Eastern Illinois','Eastern Kentucky',
+      'Eastern Washington','Elon','Florida A&M','Fordham','Furman','Gardner-Webb','Georgetown','Grambling State','Hampton',
+      'Harvard','Holy Cross','Houston Christian','Howard','Idaho','Idaho State','Illinois State','Incarnate Word','Indiana State',
+      'Jackson State','Lafayette','Lamar','Lehigh','Lindenwood','LIU','Maine','Marist','McNeese','Mercer','Merrimack',
+      'Mississippi Valley State','Monmouth','Montana','Montana State','Morehead State','Morgan State','Murray State',
+      'New Hampshire','Nicholls','Norfolk State','North Alabama','North Carolina A&T','North Carolina Central','North Dakota',
+      'Northern Arizona','Northern Colorado','Northern Iowa','Northwestern State','Penn','Portland State','Prairie View A&M',
+      'Presbyterian','Princeton','Rhode Island','Richmond','Robert Morris','Sacred Heart','St. Thomas','Samford','San Diego',
+      'South Carolina State','South Dakota','South Dakota State','Southeast Missouri State','Southeastern Louisiana','Southern',
+      'Southern Illinois','Southern Utah','Stephen F. Austin','Stetson','Stonehill','Stony Brook','Tarleton State',
+      'Tennessee State','Tennessee Tech','Texas Southern','Towson','UC Davis','UT Martin','Utah Tech','UTRGV','Valparaiso',
+      'Villanova','VMI','Wagner','Weber State','Western Carolina','Western Illinois','William & Mary','Wofford','Yale',
+      'Youngstown State'
+    ].slice().sort((a, b) => a.localeCompare(b));
+
+    function teamSelectHtml(field, idx, selected) {
+      const opts = COLLEGE_TEAMS.slice();
+      if (selected && !opts.includes(selected)) opts.unshift(selected);
+      const options = opts.map(t =>
+        `<option value="${t.replace(/"/g, '&quot;')}" ${t === selected ? 'selected' : ''}>${t}</option>`
+      ).join('');
+      return `<select data-k="${field}" data-i="${idx}" style="width:100%;min-width:0;">
+        <option value="">— Team —</option>${options}</select>`;
+    }
+
+    function renderAdmin() {
+      const list = document.getElementById('admin-games-list');
+      list.innerHTML = `
+        <div class="admin-game-row" style="font-weight:600;color:var(--muted);font-size:0.75rem;">
+          <span>#</span><span>Away</span><span>Home</span><span>Odds</span><span>Time</span><span>TV</span><span>Notes / TB</span><span></span>
+        </div>`;
+      games.forEach((g, idx) => {
+        const row = document.createElement('div');
+        row.className = 'admin-game-row';
+        const label = g.num != null ? g.num : (idx + 1);
+        row.innerHTML = `
+          <span>${label}</span>
+          ${teamSelectHtml('away', idx, g.away)}
+          ${teamSelectHtml('home', idx, g.home)}
+          <input data-k="odds" data-i="${idx}" type="number" step="0.5" value="${g.odds}">
+          <input data-k="time" data-i="${idx}" value="${g.time || ''}">
+          <input data-k="tv" data-i="${idx}" value="${g.tv || ''}">
+          <input data-k="notes" data-i="${idx}" value="${(g.notes || '')}${g.isTiebreaker ? ' [TB]' : ''}">
+          <button class="btn-sm btn-outline" data-del="${idx}">✕</button>
+        `;
+        list.appendChild(row);
+      });
+      function isHalfPoint(n) {
+        if (typeof n !== 'number' || isNaN(n)) return false;
+        const abs = Math.abs(n);
+        return Math.abs(abs - Math.floor(abs) - 0.5) < 1e-9;
+      }
+
+      const bindChange = (el) => {
+        el.onchange = () => {
+          const i = parseInt(el.dataset.i, 10);
+          const k = el.dataset.k;
+          if (k === 'odds') {
+            const val = parseFloat(el.value);
+            if (!isHalfPoint(val)) {
+              alert('Odds must include a half point (e.g. -6.5 or +3.5). Whole numbers like -6 are not allowed.');
+              el.value = games[i].odds;
+              return;
+            }
+            games[i].odds = val;
+          } else if (k === 'away' || k === 'home') {
+            games[i][k] = el.value;
+          } else {
+            games[i][k] = el.value;
+          }
+        };
+      };
+      list.querySelectorAll('input').forEach(bindChange);
+      list.querySelectorAll('select').forEach(bindChange);
+      list.querySelectorAll('[data-del]').forEach(btn => {
+        btn.onclick = () => {
+          games.splice(parseInt(btn.dataset.del, 10), 1);
+          games.forEach((g, i) => { g.num = i + 1; });
+          renderAdmin();
+        };
+      });
+    }
+
+    document.getElementById('admin-add-game').onclick = () => {
+      games.push({
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        num: games.length + 1,
+        time: '7:00 PM', tv: 'TBD', away: '', home: '',
+        odds: -3.5, date: '2026-09-05', kickoff: '2026-09-05T00:00:00Z', notes: '', isTiebreaker: false, totalLine: null
+      });
+      renderAdmin();
+    };
+
+    // ---- Automated scores from ESPN public scoreboard ----
+    function normalizeTeamName(name) {
+      return String(name || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Hawaiʻi accents → Hawaii
+        .replace(/[''`´ʻʼʻ]/g, '')                        // remove apostrophes (no space left)
+        .replace(/&/g, 'and')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\b(university|univ|college|the)\b/g, ' ')
+        .replace(/\b(st|saint)\b/g, 'state')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // Map common short names in our slate → ESPN-ish forms
+    const TEAM_ALIASES = {
+      'hawaii': ['hawaii', 'hawaii rainbow warriors'],
+      'miami fl': ['miami', 'miami florida', 'miami fl'],
+      'usc': ['usc', 'southern california', 'southern cal'],
+      'nc state': ['nc state', 'north carolina state', 'n c state'],
+      'uab': ['uab', 'alabama birmingham'],
+      'utep': ['utep', 'texas el paso'],
+      'umass': ['umass', 'massachusetts'],
+      'unlv': ['unlv', 'nevada las vegas'],
+      'smu': ['smu', 'southern methodist'],
+      'tcu': ['tcu', 'texas christian'],
+      'fresno state': ['fresno state', 'fresno st'],
+      'san jose state': ['san jose state', 'san jose st'],
+      'jacksonville state': ['jacksonville state', 'jacksonville st'],
+      'north dakota state': ['north dakota state', 'north dakota st', 'ndsu'],
+      'eastern michigan': ['eastern michigan', 'e michigan'],
+      'eastern illinois': ['eastern illinois', 'e illinois'],
+      'indiana state': ['indiana state', 'indiana st'],
+      'new mexico state': ['new mexico state', 'new mexico st'],
+      'sacramento state': ['sacramento state', 'sacramento st'],
+      'georgia tech': ['georgia tech', 'ga tech'],
+      'florida state': ['florida state', 'florida st', 'fsu'],
+      'michigan state': ['michigan state', 'michigan st', 'msu'],
+      'wake forest': ['wake forest']
+    };
+
+    function teamMatches(ourName, espnName) {
+      const a = normalizeTeamName(ourName);
+      const b = normalizeTeamName(espnName);
+      if (!a || !b) return false;
+      if (a === b) return true;
+      if (a.includes(b) || b.includes(a)) return true;
+      const aliases = TEAM_ALIASES[a] || [a];
+      return aliases.some(al => {
+        const n = normalizeTeamName(al);
+        return n === b || b.includes(n) || n.includes(b);
+      });
+    }
+
+    async function fetchEspnScoreboard(dates) {
+      // groups=80 → FBS; dates can be YYYYMMDD or YYYYMMDD-YYYYMMDD
+      const url = `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=300&dates=${dates}`;
+      let res;
+      try {
+        res = await fetch(url);
+      } catch (e) {
+        // CORS / file:// fallback
+        const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+        res = await fetch(proxy);
+      }
+      if (!res.ok) throw new Error('ESPN scoreboard HTTP ' + res.status);
+      return res.json();
+    }
+
+    async function refreshScoresFromEspn() {
+      if (!currentUser?.isAdmin) {
+        alert('Only admins can refresh scores.');
+        return;
+      }
+      const btn = document.getElementById('admin-fetch-scores');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Updating…';
+      }
+      try {
+        // Week 0 window from our slate dates
+        const dates = '20260829-20260905';
+        const data = await fetchEspnScoreboard(dates);
+        const events = data.events || [];
+
+        const espnGames = [];
+        events.forEach(ev => {
+          const comp = (ev.competitions && ev.competitions[0]) || {};
+          const competitors = comp.competitors || [];
+          const home = competitors.find(c => c.homeAway === 'home');
+          const away = competitors.find(c => c.homeAway === 'away');
+          if (!home || !away) return;
+          const statusType = (ev.status && ev.status.type) || {};
+          let status = 'scheduled';
+          if (statusType.completed || statusType.name === 'STATUS_FINAL') status = 'final';
+          else if (statusType.state === 'in' || (statusType.name || '').includes('IN_PROGRESS') || statusType.description === 'In Progress') status = 'live';
+          else if ((statusType.name || '').includes('HALFTIME')) status = 'live';
+
+          espnGames.push({
+            awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
+            homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
+            awayScore: away.score != null && away.score !== '' ? parseInt(away.score, 10) : null,
+            homeScore: home.score != null && home.score !== '' ? parseInt(home.score, 10) : null,
+            status,
+            detail: statusType.detail || statusType.shortDetail || ''
+          });
+        });
+
+        let matched = 0;
+        let updated = 0;
+        for (const g of games) {
+          const match = espnGames.find(eg =>
+            teamMatches(g.away, eg.awayName) && teamMatches(g.home, eg.homeName)
+          );
+          if (!match) continue;
+          matched++;
+
+          const newStatus = match.status;
+          const awayScore = match.awayScore;
+          const homeScore = match.homeScore;
+
+          // Only write if something changed
+          if (g.away_score === awayScore && g.home_score === homeScore && g.status === newStatus) continue;
+
+          const { error } = await sb
+            .from('games')
+            .update({
+              away_score: awayScore,
+              home_score: homeScore,
+              status: newStatus
+            })
+            .eq('id', g.id);
+          if (error) throw error;
+
+          g.away_score = awayScore;
+          g.home_score = homeScore;
+          g.status = newStatus;
+          if (awayScore != null && homeScore != null) {
+            LIVE_SCORES[g.id] = { away: awayScore, home: homeScore, status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE') };
+          }
+          updated++;
+        }
+
+        renderAdmin();
+        if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
+        alert(`ESPN scores: ${matched} game(s) matched, ${updated} updated.\n(Unmatched games may use different team names — we can add aliases.)`);
+      } catch (e) {
+        console.error(e);
+        alert('Score refresh failed: ' + (e.message || e) + '\n\nIf this is a CORS error, host the site on Vercel/Netlify or try again.');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '↻ Refresh Scores (ESPN)';
+        }
+      }
+    }
+
+    document.getElementById('admin-fetch-scores').onclick = () => refreshScoresFromEspn();
+
+    document.getElementById('admin-fetch-odds').onclick = () => {
+      // Mock: nudge odds slightly to simulate a refresh from ESPN/DK — always land on .5
+      games.forEach(g => {
+        const delta = (Math.random() - 0.5);
+        let next = Math.round((g.odds + delta) * 2) / 2;
+        if (Math.abs(Math.abs(next) - Math.floor(Math.abs(next)) - 0.5) > 1e-9) {
+          next = next > 0 ? next + 0.5 : next - 0.5;
+        }
+        g.odds = next;
+      });
+      const tb = games.find(g => g.isTiebreaker);
+      if (tb) tb.totalLine = 54.5;
+      renderAdmin();
+      alert('Odds refreshed from mock provider (in production this would hit ESPN / The Odds API / DraftKings).');
+    };
+
+    document.getElementById('admin-save').onclick = () => {
+      const bad = games.filter(g => {
+        const abs = Math.abs(g.odds);
+        return Math.abs(abs - Math.floor(abs) - 0.5) > 1e-9;
+      });
+      if (bad.length) {
+        alert('Cannot save: every line must be a half-point number (e.g. -6.5). Fix games: ' +
+          bad.map(g => `#${g.id} ${g.away}@${g.home} (${g.odds})`).join(', '));
+        return;
+      }
+      storeSet('pickem_games', JSON.stringify(games));
+      document.getElementById('admin-save-msg').classList.remove('hidden');
+      setTimeout(() => document.getElementById('admin-save-msg').classList.add('hidden'), 2000);
+      if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
+    };
+
+    function renderAll() {
+      renderPicksEntry();
+    }
+
+    // ---------- INIT ----------
+    document.getElementById('main-nav').style.display = 'none';
+    showView('auth');
+
+    (async function initAuth() {
+      try {
+        const { data: { session }, error: sessErr } = await sb.auth.getSession();
+        if (sessErr) console.error('getSession error', sessErr);
+        if (session?.user) {
+          let name = session.user.email.split('@')[0];
+          let isAdmin = false;
+          try {
+            const { data: profile } = await sb
+              .from('profiles')
+              .select('display_name, is_admin')
+              .eq('id', session.user.id)
+              .maybeSingle();
+            if (profile?.display_name) name = profile.display_name;
+            isAdmin = !!profile?.is_admin;
+          } catch (e) {
+            console.error('profile fetch error', e);
+          }
+          await setLoggedIn({
+            id: session.user.id,
+            name,
+            email: session.user.email,
+            isAdmin
+          });
+        }
+      } catch (e) {
+        console.error('initAuth failed', e);
+        showView('auth');
+      }
+
+      sb.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          currentUser = null;
+          document.getElementById('main-nav').style.display = 'none';
+          document.getElementById('user-display').textContent = '';
+          showView('auth');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
