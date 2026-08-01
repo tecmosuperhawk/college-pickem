@@ -241,7 +241,7 @@
       <button data-view="picks" class="active">My Picks</button>
       <button data-view="others">Others' Picks</button>
       <button data-view="standings">Standings</button>
-      <button data-view="admin">Admin</button>
+      <button data-view="admin" id="nav-admin-btn" class="hidden">Admin</button>
     </div>
     <div class="nav-user" id="nav-user">
       <span id="user-display"></span>
@@ -298,15 +298,15 @@
       <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
       <div id="week-tabs" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem;"></div>
       <div id="picks-games"></div>
-      <div class="card" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
-        <h3 style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
-          Tiebreaker · NC State @ Virginia Total
+      <div class="card hidden" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
+        <h3 id="tb-title" style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
+          Tiebreaker
         </h3>
         <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
           <label style="margin:0;font-size:0.85rem;color:var(--muted);">Predicted Total Points</label>
           <input type="number" id="total-points-bottom" min="0" max="150" step="1" placeholder="e.g. 52"
                  style="width:110px;text-align:center;font-weight:700;font-size:1.1rem;">
-          <span class="total-line">Line: <strong id="bottom-total-line">O/U 54.5</strong></span>
+          <span class="total-line">Line: <strong id="bottom-total-line">O/U —</strong></span>
         </div>
         <p id="tb-lock-hint" class="hidden" style="font-size:0.8rem;color:var(--locked);margin-top:0.5rem;"></p>
       </div>
@@ -725,7 +725,8 @@
         totalLine: g.total_line != null ? Number(g.total_line) : null,
         away_score: g.away_score,
         home_score: g.home_score,
-        status: g.status
+        status: g.status,
+        _fromDb: true
       };
     }
 
@@ -863,6 +864,11 @@
         currentUser = user;
         document.getElementById('main-nav').style.display = user ? 'flex' : 'none';
         document.getElementById('user-display').textContent = user ? (user.name || user.email || '') : '';
+        const adminBtn = document.getElementById('nav-admin-btn');
+        if (adminBtn) {
+          if (user && user.isAdmin) adminBtn.classList.remove('hidden');
+          else adminBtn.classList.add('hidden');
+        }
         if (user) {
           await loadGamesFromSupabase();
           await loadMyData();
@@ -916,12 +922,29 @@
         err.textContent = error.message;
         err.classList.remove('hidden'); return;
       }
-      // Ensure profile display name
       if (data.user) {
         await sb.from('profiles').update({ display_name: name }).eq('id', data.user.id);
-        await setLoggedIn({ id: data.user.id, name, email });
+        const { data: profile } = await sb
+          .from('profiles')
+          .select('display_name, is_admin')
+          .eq('id', data.user.id)
+          .maybeSingle();
+        if (data.session) {
+          await setLoggedIn({
+            id: data.user.id,
+            name: profile?.display_name || name,
+            email,
+            isAdmin: !!profile?.is_admin
+          });
+        } else {
+          err.style.color = 'var(--success)';
+          err.textContent = 'Account created. You can log in now.';
+          err.classList.remove('hidden');
+          document.getElementById('tab-login').click();
+          document.getElementById('login-email').value = email;
+        }
       } else {
-        err.textContent = 'Check your email to confirm, then log in.';
+        err.textContent = 'Account created. Please log in.';
         err.classList.remove('hidden');
       }
     };
@@ -1064,6 +1087,16 @@
       }
       const tbGame = games.find(g => g.isTiebreaker);
       const tbLocked = tbGame ? isLocked(tbGame) : false;
+      const tbCard = document.getElementById('bottom-tiebreaker');
+      if (tbCard) {
+        if (tbGame) {
+          tbCard.classList.remove('hidden');
+          const tbTitle = document.getElementById('tb-title');
+          if (tbTitle) tbTitle.textContent = `Tiebreaker · ${tbGame.away} @ ${tbGame.home} Total`;
+        } else {
+          tbCard.classList.add('hidden');
+        }
+      }
 
       const tot = document.getElementById('total-points');
       if (tot) {
@@ -1077,20 +1110,22 @@
       const totBottom = document.getElementById('total-points-bottom');
       if (totBottom) {
         if (myTotal !== null && !isNaN(myTotal)) totBottom.value = myTotal;
+        else totBottom.value = '';
         totBottom.disabled = tbLocked;
         totBottom.oninput = () => {
           if (tbLocked) return;
           setTotalFromInput(totBottom.value.trim());
         };
         const lineEl = document.getElementById('bottom-total-line');
-        if (tbGame && lineEl) lineEl.textContent = `O/U ${tbGame.totalLine}`;
+        if (lineEl) lineEl.textContent = tbGame && tbGame.totalLine != null ? `O/U ${tbGame.totalLine}` : 'O/U —';
       }
       const tbHint = document.getElementById('tb-lock-hint');
       if (tbHint) {
-        if (tbLocked) {
+        if (tbGame && tbLocked) {
+          const matchup = `${tbGame.away} @ ${tbGame.home}`;
           tbHint.textContent = myTotal !== null && !isNaN(myTotal)
-            ? 'Tiebreaker locked — NC State @ Virginia has started. Your total is saved.'
-            : 'Tiebreaker locked — NC State @ Virginia has started. No total was entered.';
+            ? `Tiebreaker locked — ${matchup} has started. Your total is saved.`
+            : `Tiebreaker locked — ${matchup} has started. No total was entered.`;
           tbHint.classList.remove('hidden');
         } else {
           tbHint.classList.add('hidden');
@@ -1698,12 +1733,13 @@
     function renderAdmin() {
       const list = document.getElementById('admin-games-list');
       list.innerHTML = `
-        <div class="admin-game-row" style="font-weight:600;color:var(--muted);font-size:0.75rem;">
-          <span>#</span><span>Away</span><span>Home</span><span>Odds</span><span>Time</span><span>TV</span><span>Notes / TB</span><span></span>
+        <div class="admin-game-row" style="font-weight:600;color:var(--muted);font-size:0.75rem;grid-template-columns:2rem 1fr 1fr 4.5rem 5rem 5rem 1fr 3.5rem 4rem 2rem;">
+          <span>#</span><span>Away</span><span>Home</span><span>Odds</span><span>Time</span><span>TV</span><span>Notes</span><span>TB?</span><span>O/U</span><span></span>
         </div>`;
       games.forEach((g, idx) => {
         const row = document.createElement('div');
         row.className = 'admin-game-row';
+        row.style.gridTemplateColumns = '2rem 1fr 1fr 4.5rem 5rem 5rem 1fr 3.5rem 4rem 2rem';
         const label = g.num != null ? g.num : (idx + 1);
         row.innerHTML = `
           <span>${label}</span>
@@ -1712,7 +1748,12 @@
           <input data-k="odds" data-i="${idx}" type="number" step="0.5" value="${g.odds}">
           <input data-k="time" data-i="${idx}" value="${g.time || ''}">
           <input data-k="tv" data-i="${idx}" value="${g.tv || ''}">
-          <input data-k="notes" data-i="${idx}" value="${(g.notes || '')}${g.isTiebreaker ? ' [TB]' : ''}">
+          <input data-k="notes" data-i="${idx}" value="${g.notes || ''}">
+          <label style="display:flex;align-items:center;gap:0.25rem;font-size:0.75rem;margin:0;">
+            <input type="checkbox" data-k="isTiebreaker" data-i="${idx}" ${g.isTiebreaker ? 'checked' : ''}> TB
+          </label>
+          <input data-k="totalLine" data-i="${idx}" type="number" step="0.5" placeholder="O/U"
+                 value="${g.totalLine != null ? g.totalLine : ''}" ${g.isTiebreaker ? '' : 'disabled'}>
           <button class="btn-sm btn-outline" data-del="${idx}">✕</button>
         `;
         list.appendChild(row);
@@ -1735,6 +1776,20 @@
               return;
             }
             games[i].odds = val;
+          } else if (k === 'isTiebreaker') {
+            games.forEach((g, j) => {
+              if (j !== i) g.isTiebreaker = false;
+            });
+            games[i].isTiebreaker = el.checked;
+            renderAdmin();
+          } else if (k === 'totalLine') {
+            const val = el.value === '' ? null : parseFloat(el.value);
+            if (val != null && !isHalfPoint(val)) {
+              alert('Total must be a half point (e.g. 54.5).');
+              el.value = games[i].totalLine != null ? games[i].totalLine : '';
+              return;
+            }
+            games[i].totalLine = val;
           } else if (k === 'away' || k === 'home') {
             games[i][k] = el.value;
           } else {
@@ -1755,10 +1810,12 @@
 
     document.getElementById('admin-add-game').onclick = () => {
       games.push({
-        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        id: 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2),
         num: games.length + 1,
         time: '7:00 PM', tv: 'TBD', away: '', home: '',
-        odds: -3.5, date: '2026-09-05', kickoff: '2026-09-05T00:00:00Z', notes: '', isTiebreaker: false, totalLine: null
+        odds: -3.5, date: '2026-09-06', kickoff: '2026-09-06T19:00:00Z',
+        notes: '', isTiebreaker: false, totalLine: null,
+        _fromDb: false
       });
       renderAdmin();
     };
@@ -2219,8 +2276,23 @@
       btn.textContent = 'Saving…';
 
       try {
+        // Ensure only one TB per week in memory
+        let tbCount = games.filter(g => g.isTiebreaker).length;
+        if (tbCount > 1) {
+          alert('Only one tiebreaker game is allowed per week. Uncheck extras in Admin.');
+          return;
+        }
+
         for (let i = 0; i < games.length; i++) {
           const g = games[i];
+          if (!g.away || !g.home) {
+            throw new Error(`Game #${i + 1} needs both away and home teams.`);
+          }
+          // kickoff_at is NOT NULL in DB — default if missing
+          if (!g.kickoff) {
+            const d = g.date || '2026-09-06';
+            g.kickoff = `${d}T19:00:00Z`;
+          }
           const payload = {
             week_id: activeWeekId,
             sort_order: g.num != null ? g.num : i + 1,
@@ -2230,22 +2302,21 @@
             game_time: g.time || null,
             tv: g.tv || null,
             game_date: g.date || null,
-            kickoff_at: g.kickoff || null,
+            kickoff_at: g.kickoff,
             notes: (g.notes || '').replace(/\s*\[TB\]\s*$/, ''),
             is_tiebreaker: !!g.isTiebreaker,
-            total_line: g.totalLine != null ? Number(g.totalLine) : null,
+            total_line: g.isTiebreaker && g.totalLine != null ? Number(g.totalLine) : (g.isTiebreaker ? null : null),
             status: g.status || 'scheduled'
           };
 
-          // Existing DB rows have UUID ids; brand-new local-only rows need insert
-          const looksLikeUuid = typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id);
-          if (looksLikeUuid) {
+          if (g._fromDb) {
             const { error } = await sb.from('games').update(payload).eq('id', g.id);
             if (error) throw error;
           } else {
             const { data, error } = await sb.from('games').insert(payload).select('id').single();
             if (error) throw error;
             g.id = data.id;
+            g._fromDb = true;
           }
           g.num = payload.sort_order;
         }
@@ -2253,7 +2324,12 @@
         msg.textContent = 'Slate saved to database.';
         msg.classList.remove('hidden');
         setTimeout(() => msg.classList.add('hidden'), 2500);
-        if (document.getElementById('view-picks').classList.contains('active')) renderPicksEntry();
+        await loadGamesForWeek(activeWeekId);
+        renderAdmin();
+        if (document.getElementById('view-picks').classList.contains('active')) {
+          await loadMyData();
+          renderPicksEntry();
+        }
       } catch (e) {
         console.error(e);
         alert('Could not save slate: ' + (e.message || e));
