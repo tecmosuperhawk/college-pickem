@@ -784,12 +784,24 @@
 
     // ---------- AUTH ----------
     function showView(name) {
+      // Non-admins cannot open Admin (nav, forced calls, or leftover active class)
+      if (name === 'admin' && !currentUser?.isAdmin) {
+        name = currentUser ? 'picks' : 'auth';
+      }
       document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
       const el = document.getElementById('view-' + name);
       if (el) el.classList.add('active');
       document.querySelectorAll('#nav-links button').forEach(b => {
         b.classList.toggle('active', b.dataset.view === name);
       });
+      // Keep admin panel empty when not allowed
+      if (name !== 'admin') {
+        const adminView = document.getElementById('view-admin');
+        if (adminView && !currentUser?.isAdmin) {
+          const list = document.getElementById('admin-games-list');
+          if (list) list.innerHTML = '';
+        }
+      }
     }
 
     // ---------- SUPABASE ----------
@@ -844,11 +856,11 @@
       const picks = document.getElementById('view-picks')?.classList.contains('active');
       const others = document.getElementById('view-others')?.classList.contains('active');
       const stand = document.getElementById('view-standings')?.classList.contains('active');
-      const admin = document.getElementById('view-admin')?.classList.contains('active');
+      const admin = document.getElementById('view-admin')?.classList.contains('active') && !!currentUser?.isAdmin;
       if (force === 'picks' || picks) renderPicksEntry();
       if (force === 'others' || others) await renderOthers();
       if (force === 'standings' || stand) await renderStandings('week');
-      if (force === 'admin' || admin) renderAdmin();
+      if ((force === 'admin' || admin) && currentUser?.isAdmin) renderAdmin();
     }
 
     function renderWeekTabs() {
@@ -1213,7 +1225,11 @@
     // Nav
     document.querySelectorAll('#nav-links button').forEach(btn => {
       btn.onclick = () => {
-        const v = btn.dataset.view;
+        let v = btn.dataset.view;
+        if (v === 'admin' && !currentUser?.isAdmin) {
+          alert('Admin access only.');
+          v = 'picks';
+        }
         if (v === 'others') renderOthers();
         if (v === 'standings') renderStandings('week');
         if (v === 'admin') renderAdmin();
@@ -2180,7 +2196,12 @@
     }
 
     function renderAdmin() {
+      if (!currentUser?.isAdmin) {
+        showView('picks');
+        return;
+      }
       const list = document.getElementById('admin-games-list');
+      if (!list) return;
       list.innerHTML = `
         <div class="admin-game-row" style="font-weight:600;color:var(--muted);font-size:0.75rem;grid-template-columns:2rem 1fr 1fr 4.5rem 5rem 5rem 1fr 3.5rem 4rem 2rem;">
           <span>#</span><span>Away</span><span>Home</span><span>Odds</span><span>Time</span><span>TV</span><span>Notes</span><span>TB?</span><span>O/U</span><span></span>
