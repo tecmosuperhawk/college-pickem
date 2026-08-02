@@ -568,15 +568,73 @@
       }
     }
 
+    let saveInFlight = false;
+
+    async function resolvePickSheetId(sheetPayload) {
+      // Prefer known id
+      if (myPickSheetId) {
+        const { error } = await sb
+          .from('pick_sheets')
+          .update({
+            total_points_guess: sheetPayload.total_points_guess,
+            five_star_game_id: sheetPayload.five_star_game_id,
+            five_star_side: sheetPayload.five_star_side,
+            submitted_at: sheetPayload.submitted_at,
+            updated_at: sheetPayload.updated_at
+          })
+          .eq('id', myPickSheetId)
+          .eq('user_id', currentUser.id);
+        if (!error) return myPickSheetId;
+        // Fall through if row missing / race
+      }
+
+      // Atomic upsert on unique (user_id, week_id) — safe under concurrent first-saves
+      const { data: upserted, error: upErr } = await sb
+        .from('pick_sheets')
+        .upsert(sheetPayload, { onConflict: 'user_id,week_id' })
+        .select('id')
+        .single();
+      if (!upErr && upserted?.id) {
+        myPickSheetId = upserted.id;
+        return upserted.id;
+      }
+
+      // Unique violation / race: re-fetch the winner's row
+      const { data: existing, error: findErr } = await sb
+        .from('pick_sheets')
+        .select('id')
+        .eq('user_id', currentUser.id)
+        .eq('week_id', activeWeekId)
+        .maybeSingle();
+      if (findErr) throw findErr;
+      if (!existing) throw upErr || new Error('Could not create or find pick sheet');
+      myPickSheetId = existing.id;
+      const { error: updErr } = await sb
+        .from('pick_sheets')
+        .update({
+          total_points_guess: sheetPayload.total_points_guess,
+          five_star_game_id: sheetPayload.five_star_game_id,
+          five_star_side: sheetPayload.five_star_side,
+          submitted_at: sheetPayload.submitted_at,
+          updated_at: sheetPayload.updated_at
+        })
+        .eq('id', existing.id);
+      if (updErr) throw updErr;
+      return existing.id;
+    }
+
     async function saveMyData() {
       if (!currentUser || !activeWeekId) {
         alert('Not logged in or no active week.');
         return false;
       }
+      if (saveInFlight) {
+        return false; // ignore double-clicks / parallel saves from same tab
+      }
+      saveInFlight = true;
       try {
         applyLockedDefaults();
 
-        // Parse 5★ → game id + side
         let fiveStarGameId = null;
         let fiveStarSide = null;
         if (myStar) {
@@ -596,25 +654,9 @@
           updated_at: new Date().toISOString()
         };
 
-        let sheetId = myPickSheetId;
-        if (sheetId) {
-          const { error } = await sb
-            .from('pick_sheets')
-            .update(sheetPayload)
-            .eq('id', sheetId);
-          if (error) throw error;
-        } else {
-          const { data, error } = await sb
-            .from('pick_sheets')
-            .insert(sheetPayload)
-            .select('id')
-            .single();
-          if (error) throw error;
-          sheetId = data.id;
-          myPickSheetId = sheetId;
-        }
+        const sheetId = await resolvePickSheetId(sheetPayload);
 
-        // Upsert each pick
+        // Upsert picks — unique (pick_sheet_id, game_id) handles concurrent retries
         const pickRows = Object.keys(myPicks).map(gameId => ({
           pick_sheet_id: sheetId,
           game_id: gameId,
@@ -636,6 +678,8 @@
         console.error('saveMyData failed', e);
         alert('Could not save picks: ' + (e.message || e));
         return false;
+      } finally {
+        saveInFlight = false;
       }
     }
 
@@ -643,31 +687,29 @@
     // If the user already has a 5★ on a now-locked game, that option is still
     // included so it can display, but the dropdown will be disabled.
     function fiveStarOptions(includeLockedSelected) {
+      // Only teams the user has already selected for this week (their covers)
       const opts = [];
       games.forEach(g => {
         const locked = isLocked(g);
         if (locked && !includeLockedSelected) return;
+        const side = myPicks[g.id];
+        if (side !== 'away' && side !== 'home') return; // must pick the game first
+        const team = side === 'away' ? g.away : g.home;
+        const line = side === 'away' ? formatOdds(-g.odds) : formatOdds(g.odds);
         opts.push({
-          value: `${g.away}|${g.id}`,
-          label: `${g.away} ${formatOdds(-g.odds)}`,
-          team: g.away,
-          gameId: g.id,
-          locked
-        });
-        opts.push({
-          value: `${g.home}|${g.id}`,
-          label: `${g.home} ${formatOdds(g.odds)}`,
-          team: g.home,
+          value: `${team}|${g.id}`,
+          label: `${team} ${line}`,
+          team,
           gameId: g.id,
           locked
         });
       });
-      // If includeLockedSelected and current myStar is on a locked game, ensure it's present
+      // Keep current 5★ visible if its game is locked (can't change it)
       if (includeLockedSelected && myStar) {
         const exists = opts.some(o => o.value === myStar);
         if (!exists) {
           const [team, idStr] = myStar.split('|');
-          const g = games.find(x => x.id === parseInt(idStr, 10));
+          const g = games.find(x => x.id === idStr);
           if (g) {
             const isAway = team === g.away;
             opts.push({
@@ -1067,6 +1109,13 @@
         el.onclick = () => {
           const id = el.dataset.id; // UUID string from Supabase
           myPicks[id] = el.dataset.side;
+          // If 5★ was the other side of this game, clear it
+          if (myStar && myStar.endsWith('|' + id)) {
+            const starTeam = myStar.split('|')[0];
+            const g = games.find(x => x.id === id);
+            const pickedTeam = el.dataset.side === 'away' ? g?.away : g?.home;
+            if (starTeam !== pickedTeam) myStar = '';
+          }
           const card = container.querySelector(`.game-card[data-id="${id}"]`);
           if (card) {
             card.querySelectorAll('.team').forEach(t => t.classList.toggle('selected', t.dataset.side === myPicks[id]));
