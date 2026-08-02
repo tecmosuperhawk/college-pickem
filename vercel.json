@@ -1,10 +1,4 @@
 {
   "version": 2,
-  "cleanUrls": true,
-  "crons": [
-    {
-      "path": "/api/refresh-scores",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  "cleanUrls": true
 }
