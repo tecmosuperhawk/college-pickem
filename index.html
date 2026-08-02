@@ -104,7 +104,13 @@
     .form-row { margin-bottom: 0.9rem; }
     .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
     .error { color: var(--danger); font-size: 0.85rem; margin-top: 0.4rem; }
+    .msg-ok { color: var(--success); font-size: 0.85rem; margin-top: 0.4rem; }
     .success-msg { color: var(--success); font-size: 0.9rem; margin-top: 0.5rem; }
+    .auth-link {
+      background: none; border: none; color: var(--accent); cursor: pointer;
+      font-size: 0.85rem; padding: 0; margin-top: 0.75rem; text-decoration: underline;
+    }
+    .auth-link:hover { color: var(--text); }
 
     /* Game cards */
     .game-card {
@@ -291,23 +297,25 @@
         <div id="login-form">
           <div class="form-row">
             <label>Email</label>
-            <input type="email" id="login-email" placeholder="you@email.com">
+            <input type="email" id="login-email" placeholder="you@email.com" autocomplete="username">
           </div>
           <div class="form-row">
             <label>Password</label>
-            <input type="password" id="login-password" placeholder="••••••••">
+            <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
           </div>
           <button class="btn" style="width:100%" id="do-login">Login</button>
+          <button type="button" class="auth-link" id="forgot-password-link" style="display:block;width:100%;text-align:center;">Forgot password?</button>
           <p class="error hidden" id="login-error"></p>
+          <p class="msg-ok hidden" id="login-ok"></p>
         </div>
         <div id="register-form" class="hidden">
           <div class="form-row">
             <label>Display Name</label>
-            <input type="text" id="reg-name" placeholder="Your name">
+            <input type="text" id="reg-name" placeholder="Your name" autocomplete="nickname">
           </div>
           <div class="form-row">
             <label>Email</label>
-            <input type="email" id="reg-email" placeholder="you@email.com">
+            <input type="email" id="reg-email" placeholder="you@email.com" autocomplete="email">
           </div>
           <div class="form-row">
             <label>Password</label>
@@ -315,6 +323,7 @@
           </div>
           <button class="btn" style="width:100%" id="do-register">Create Account</button>
           <p class="error hidden" id="reg-error"></p>
+          <p class="msg-ok hidden" id="reg-ok"></p>
         </div>
         <p style="margin-top:1rem;font-size:0.8rem;color:var(--muted);text-align:center;">
           Simple email + password for a small trusted group.
@@ -1019,13 +1028,40 @@
       }
     }
 
+    function clearAuthMessages() {
+      ['login-error', 'login-ok', 'reg-error', 'reg-ok'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add('hidden');
+        el.textContent = '';
+      });
+    }
+
+    function showAuthError(id, text) {
+      clearAuthMessages();
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden');
+    }
+
+    function showAuthOk(id, text) {
+      clearAuthMessages();
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden');
+    }
+
     document.getElementById('tab-login').onclick = () => {
+      clearAuthMessages();
       document.getElementById('login-form').classList.remove('hidden');
       document.getElementById('register-form').classList.add('hidden');
       document.getElementById('tab-login').classList.add('btn'); document.getElementById('tab-login').classList.remove('btn-outline');
       document.getElementById('tab-register').classList.add('btn-outline'); document.getElementById('tab-register').classList.remove('btn');
     };
     document.getElementById('tab-register').onclick = () => {
+      clearAuthMessages();
       document.getElementById('register-form').classList.remove('hidden');
       document.getElementById('login-form').classList.add('hidden');
       document.getElementById('tab-register').classList.add('btn'); document.getElementById('tab-register').classList.remove('btn-outline');
@@ -1036,70 +1072,125 @@
       const name = document.getElementById('reg-name').value.trim();
       const email = document.getElementById('reg-email').value.trim().toLowerCase();
       const pass = document.getElementById('reg-password').value;
-      const err = document.getElementById('reg-error');
-      err.classList.add('hidden');
+      const btn = document.getElementById('do-register');
+      clearAuthMessages();
       if (!name || !email || pass.length < 6) {
-        err.textContent = 'Name, valid email, and password (6+ chars) required.';
-        err.classList.remove('hidden'); return;
+        showAuthError('reg-error', 'Name, valid email, and password (6+ characters) are required.');
+        return;
       }
-      const { data, error } = await sb.auth.signUp({
-        email,
-        password: pass,
-        options: { data: { display_name: name } }
-      });
-      if (error) {
-        err.textContent = error.message;
-        err.classList.remove('hidden'); return;
-      }
-      if (data.user) {
-        await sb.from('profiles').update({ display_name: name }).eq('id', data.user.id);
-        const { data: profile } = await sb
-          .from('profiles')
-          .select('display_name, is_admin')
-          .eq('id', data.user.id)
-          .maybeSingle();
-        if (data.session) {
-          await setLoggedIn({
-            id: data.user.id,
-            name: profile?.display_name || name,
-            email,
-            isAdmin: !!profile?.is_admin
-          });
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+      try {
+        const { data, error } = await sb.auth.signUp({
+          email,
+          password: pass,
+          options: { data: { display_name: name } }
+        });
+        if (error) {
+          showAuthError('reg-error', friendlyAuthError(error.message));
+          return;
+        }
+        if (data.user) {
+          await sb.from('profiles').update({ display_name: name }).eq('id', data.user.id);
+          const { data: profile } = await sb
+            .from('profiles')
+            .select('display_name, is_admin')
+            .eq('id', data.user.id)
+            .maybeSingle();
+          if (data.session) {
+            await setLoggedIn({
+              id: data.user.id,
+              name: profile?.display_name || name,
+              email,
+              isAdmin: !!profile?.is_admin
+            });
+          } else {
+            // Email confirm may be on — still a success
+            document.getElementById('tab-login').click();
+            document.getElementById('login-email').value = email;
+            showAuthOk('login-ok', 'Account created successfully. You can log in now.');
+          }
         } else {
-          err.style.color = 'var(--success)';
-          err.textContent = 'Account created. You can log in now.';
-          err.classList.remove('hidden');
           document.getElementById('tab-login').click();
           document.getElementById('login-email').value = email;
+          showAuthOk('login-ok', 'Account created successfully. Please log in.');
         }
-      } else {
-        err.textContent = 'Account created. Please log in.';
-        err.classList.remove('hidden');
+      } catch (e) {
+        showAuthError('reg-error', e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Account';
       }
     };
 
     document.getElementById('do-login').onclick = async () => {
       const email = document.getElementById('login-email').value.trim().toLowerCase();
       const pass = document.getElementById('login-password').value;
-      const err = document.getElementById('login-error');
-      err.classList.add('hidden');
-      const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
-      if (error) {
-        err.textContent = error.message;
-        err.classList.remove('hidden'); return;
+      const btn = document.getElementById('do-login');
+      clearAuthMessages();
+      if (!email || !pass) {
+        showAuthError('login-error', 'Enter your email and password.');
+        return;
       }
-      const { data: profile } = await sb
-        .from('profiles')
-        .select('display_name, is_admin')
-        .eq('id', data.user.id)
-        .maybeSingle();
-      await setLoggedIn({
-        id: data.user.id,
-        name: profile?.display_name || email.split('@')[0],
-        email,
-        isAdmin: !!profile?.is_admin
-      });
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      try {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if (error) {
+          showAuthError('login-error', friendlyAuthError(error.message));
+          return;
+        }
+        const { data: profile } = await sb
+          .from('profiles')
+          .select('display_name, is_admin')
+          .eq('id', data.user.id)
+          .maybeSingle();
+        await setLoggedIn({
+          id: data.user.id,
+          name: profile?.display_name || email.split('@')[0],
+          email,
+          isAdmin: !!profile?.is_admin
+        });
+      } catch (e) {
+        showAuthError('login-error', e.message || String(e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Login';
+      }
     };
+
+    document.getElementById('forgot-password-link').onclick = async () => {
+      clearAuthMessages();
+      const email = document.getElementById('login-email').value.trim().toLowerCase();
+      if (!email) {
+        showAuthError('login-error', 'Enter your email above, then click Forgot password.');
+        return;
+      }
+      const link = document.getElementById('forgot-password-link');
+      link.disabled = true;
+      try {
+        const redirectTo = window.location.origin + window.location.pathname;
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+        if (error) {
+          showAuthError('login-error', friendlyAuthError(error.message));
+          return;
+        }
+        showAuthOk('login-ok', 'Password reset email sent. Check your inbox (and spam) for a link from Supabase.');
+      } catch (e) {
+        showAuthError('login-error', e.message || String(e));
+      } finally {
+        link.disabled = false;
+      }
+    };
+
+    function friendlyAuthError(msg) {
+      const m = String(msg || '');
+      if (/invalid login credentials/i.test(m)) return 'Incorrect email or password.';
+      if (/user already registered/i.test(m)) return 'That email already has an account. Try logging in.';
+      if (/email not confirmed/i.test(m)) return 'Confirm your email first, then log in.';
+      if (/password/i.test(m) && /6/i.test(m)) return 'Password must be at least 6 characters.';
+      return m;
+    }
 
     document.getElementById('logout-btn').onclick = async () => {
       try {
