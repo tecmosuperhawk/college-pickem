@@ -1181,47 +1181,59 @@
         }
       }
 
-      // 5★ dropdown — only open games; locked once that team's game starts
+      refreshFiveStarSelect();
+      updateEntryStatus();
+    }
+
+    /** Rebuild 5★ options from current in-memory picks (before Save). */
+    function refreshFiveStarSelect() {
       const sel = document.getElementById('five-star-select');
+      if (!sel) return;
       const prev = myStar;
       const starLocked = isFiveStarLocked();
+      const available = fiveStarOptions(true).filter(opt => !opt.locked || opt.value === prev);
+
+      // Drop 5★ if that side is no longer the user's pick
+      if (myStar && !available.some(o => o.value === myStar) && !starLocked) {
+        myStar = '';
+      }
+
       sel.innerHTML = '<option value="">— Select your most confident cover —</option>';
-      fiveStarOptions(true).forEach(opt => {
-        // Hide locked options unless it's the user's current selection
-        if (opt.locked && opt.value !== prev) return;
+      available.forEach(opt => {
         const o = document.createElement('option');
         o.value = opt.value;
         o.textContent = opt.label + (opt.locked ? ' (locked)' : '');
-        if (opt.value === prev) o.selected = true;
+        if (opt.value === myStar) o.selected = true;
         sel.appendChild(o);
       });
       sel.disabled = starLocked;
       sel.onchange = () => {
-        if (isFiveStarLocked()) return; // shouldn't fire when disabled
+        if (isFiveStarLocked()) return;
         myStar = sel.value;
         updateEntryStatus();
       };
-      // Hint under the dropdown
+
       let starHint = document.getElementById('star-lock-hint');
-      if (!starHint) {
+      if (!starHint && sel.parentElement) {
         starHint = document.createElement('p');
         starHint.id = 'star-lock-hint';
         starHint.style.cssText = 'font-size:0.8rem;color:var(--muted);margin-top:0.4rem;';
         sel.parentElement.appendChild(starHint);
       }
-      if (starLocked) {
-        starHint.textContent = '5★ is locked — that team’s game has already started.';
-        starHint.style.color = 'var(--locked)';
-      } else {
-        starHint.textContent = 'Only teams from games that have not started are available.';
-        starHint.style.color = 'var(--muted)';
+      if (starHint) {
+        if (starLocked) {
+          starHint.textContent = '5★ is locked — that team’s game has already started.';
+          starHint.style.color = 'var(--locked)';
+        } else {
+          starHint.textContent = 'Only teams you have picked (open games) appear here. Updates as you change picks.';
+          starHint.style.color = 'var(--muted)';
+        }
       }
-
-      updateEntryStatus();
     }
 
     function updateEntryStatus() {
       applyLockedDefaults();
+      refreshFiveStarSelect();
       const openGames = games.filter(g => !isLocked(g));
       const openPicked = openGames.filter(g => myPicks[g.id]).length;
       const lockedCount = games.length - openGames.length;
@@ -1243,7 +1255,7 @@
 
       const ss = document.getElementById('star-status');
       if (myStar) {
-        const match = fiveStarOptions().find(o => o.value === myStar);
+        const match = fiveStarOptions(true).find(o => o.value === myStar);
         ss.textContent = match ? match.label : myStar;
         ss.style.color = 'var(--star)';
       } else {
