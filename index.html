@@ -383,7 +383,7 @@
               <th>Record</th>
               <th class="sortable" data-sort="pts">Points <span class="sort-ind"></span></th>
               <th class="sortable" data-sort="star">5★ <span class="sort-ind"></span></th>
-              <th>TB</th>
+              <th id="standings-tb-th">TB</th>
             </tr>
           </thead>
           <tbody id="standings-body"></tbody>
@@ -1663,6 +1663,8 @@
       const body = document.getElementById('standings-body');
       const banner = document.getElementById('standings-winner-banner');
       const winnerSet = new Set((winners || []).map(w => w.userId));
+      const tbHead = document.getElementById('standings-tb-th');
+      if (tbHead) tbHead.style.display = showTb ? '' : 'none';
 
       if (banner) {
         if (weekFinal && winners && winners.length) {
@@ -1680,7 +1682,6 @@
         }
       }
 
-      // Rank: shared ranks for ties on current sort for display in week mode by pts then tb
       body.innerHTML = rows.map((r, i) => {
         const isWinner = winnerSet.has(r.userId);
         const classes = [
@@ -1704,7 +1705,7 @@
           <td>${r.record}</td>
           <td>${r.pts}</td>
           <td>${starCell}</td>
-          <td>${showTb ? formatTbCell(r, weekFinal, actualTotal) : '—'}</td>
+          ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal)}</td>` : ''}
         </tr>`;
       }).join('');
     }
@@ -2014,11 +2015,11 @@
     }
 
     document.getElementById('stand-week').onclick = () => {
-      standingsSort = { key: 'pts', dir: 'desc' };
+      standingsSort = { key: 'pts', dir: 'desc' }; // default: highest points first
       renderStandings('week');
     };
     document.getElementById('stand-overall').onclick = () => {
-      standingsSort = { key: 'pts', dir: 'desc' };
+      standingsSort = { key: 'pts', dir: 'desc' }; // default: highest points first
       renderStandings('overall');
     };
     document.querySelectorAll('#standings-head th.sortable').forEach(th => {
