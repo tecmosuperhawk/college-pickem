@@ -2158,9 +2158,31 @@
       list.querySelectorAll('input').forEach(bindChange);
       list.querySelectorAll('select').forEach(bindChange);
       list.querySelectorAll('[data-del]').forEach(btn => {
-        btn.onclick = () => {
-          games.splice(parseInt(btn.dataset.del, 10), 1);
-          games.forEach((g, i) => { g.num = i + 1; });
+        btn.onclick = async () => {
+          const idx = parseInt(btn.dataset.del, 10);
+          const g = games[idx];
+          if (!g) return;
+          const label = (g.away && g.home) ? `${g.away} @ ${g.home}` : `Game #${g.num || idx + 1}`;
+          if (!confirm(`Remove ${label} from this week’s slate?\n\nThis deletes it from the database for everyone (and any picks on this game).`)) {
+            return;
+          }
+          // Already in DB → delete remotely (picks first if FK requires it)
+          if (g._fromDb && g.id && !String(g.id).startsWith('new-')) {
+            btn.disabled = true;
+            try {
+              const { error: pErr } = await sb.from('picks').delete().eq('game_id', g.id);
+              if (pErr) throw pErr;
+              const { error: gErr } = await sb.from('games').delete().eq('id', g.id);
+              if (gErr) throw gErr;
+            } catch (e) {
+              console.error(e);
+              alert('Could not delete game: ' + (e.message || e));
+              btn.disabled = false;
+              return;
+            }
+          }
+          games.splice(idx, 1);
+          games.forEach((row, i) => { row.num = i + 1; });
           renderAdmin();
         };
       });
