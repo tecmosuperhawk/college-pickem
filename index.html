@@ -268,6 +268,19 @@
     .tabs button { flex: 1; }
     .view-section { display: none; }
     .view-section.active { display: block; }
+    .note-card { margin-bottom: 1rem; }
+    .note-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .note-body { white-space: pre-wrap; line-height: 1.5; margin: 0 0 0.75rem; }
+    .note-images { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .note-images img {
+      max-width: 100%; max-height: 320px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1); cursor: pointer;
+    }
+    .note-img-thumb {
+      width: 72px; height: 72px; object-fit: cover; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .note-actions { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
   </style>
 </head>
 <body>
@@ -277,6 +290,7 @@
       <button data-view="picks" class="active">My Picks</button>
       <button data-view="others">Group Picks</button>
       <button data-view="standings">Standings</button>
+      <button data-view="notes">Commish Notes</button>
       <button data-view="admin" id="nav-admin-btn" class="hidden">Admin</button>
     </div>
     <div class="nav-user" id="nav-user">
@@ -372,6 +386,33 @@
       <p class="subtitle">Picks become visible after that game’s kickoff. Live scores shown when available.</p>
       <div id="week-tabs-group" class="week-tabs"></div>
       <div id="others-content"></div>
+    </div>
+
+    <!-- COMMISH NOTES -->
+    <div id="view-notes" class="view-section">
+      <h1>Notes from the Commish</h1>
+      <p class="subtitle">Announcements, reminders, and notes for the group.</p>
+      <div id="notes-admin-editor" class="card hidden" style="margin-bottom:1.25rem;border-color:var(--accent);">
+        <h3 style="margin:0 0 0.75rem;font-size:0.95rem;">Post / edit note</h3>
+        <div class="form-row">
+          <label>Message</label>
+          <textarea id="notes-body" rows="5" placeholder="Write a note for the group…" style="width:100%;resize:vertical;min-height:100px;"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Images (JPEG, PNG, GIF, WebP)</label>
+          <input type="file" id="notes-images" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+          <p style="font-size:0.8rem;color:var(--muted);margin:0.35rem 0 0;">You can attach multiple images. Max ~5MB each.</p>
+        </div>
+        <div id="notes-image-preview" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;"></div>
+        <input type="hidden" id="notes-edit-id" value="">
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;">
+          <button class="btn" id="notes-save-btn">Post note</button>
+          <button class="btn btn-outline btn-sm hidden" id="notes-cancel-edit">Cancel edit</button>
+          <span class="success-msg hidden" id="notes-save-msg">Saved.</span>
+          <span class="error hidden" id="notes-save-err"></span>
+        </div>
+      </div>
+      <div id="notes-list"></div>
     </div>
 
     <!-- STANDINGS -->
@@ -1234,9 +1275,264 @@
         if (v === 'standings') renderStandings('week');
         if (v === 'admin') renderAdmin();
         if (v === 'picks') renderPicksEntry();
+        if (v === 'notes') renderNotes();
         showView(v);
       };
     });
+
+    // ---------- COMMISH NOTES ----------
+    let notesPendingFiles = []; // File objects for new uploads while editing
+    let notesExistingImages = []; // {url, path?} already on a note
+
+    function escapeHtml(s) {
+      return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatNoteTime(iso) {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleString('en-US', {
+          timeZone: 'America/Chicago',
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit'
+        }) + ' CT';
+      } catch (_) {
+        return iso;
+      }
+    }
+
+    function resetNotesEditor() {
+      document.getElementById('notes-edit-id').value = '';
+      document.getElementById('notes-body').value = '';
+      document.getElementById('notes-images').value = '';
+      notesPendingFiles = [];
+      notesExistingImages = [];
+      document.getElementById('notes-image-preview').innerHTML = '';
+      document.getElementById('notes-save-btn').textContent = 'Post note';
+      document.getElementById('notes-cancel-edit').classList.add('hidden');
+      document.getElementById('notes-save-err').classList.add('hidden');
+      document.getElementById('notes-save-msg').classList.add('hidden');
+    }
+
+    function renderNotesImagePreview() {
+      const box = document.getElementById('notes-image-preview');
+      box.innerHTML = '';
+      notesExistingImages.forEach((img, i) => {
+        const wrap = document.createElement('div');
+        wrap.style.position = 'relative';
+        wrap.innerHTML = `<img class="note-img-thumb" src="${escapeHtml(img.url)}" alt="">`;
+        if (currentUser?.isAdmin) {
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'btn-sm btn-outline';
+          rm.textContent = '✕';
+          rm.style.cssText = 'position:absolute;top:2px;right:2px;padding:0 0.3rem;font-size:0.7rem;';
+          rm.onclick = () => {
+            notesExistingImages.splice(i, 1);
+            renderNotesImagePreview();
+          };
+          wrap.appendChild(rm);
+        }
+        box.appendChild(wrap);
+      });
+      notesPendingFiles.forEach((file, i) => {
+        const url = URL.createObjectURL(file);
+        const wrap = document.createElement('div');
+        wrap.style.position = 'relative';
+        const img = document.createElement('img');
+        img.className = 'note-img-thumb';
+        img.src = url;
+        wrap.appendChild(img);
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn-sm btn-outline';
+        rm.textContent = '✕';
+        rm.style.cssText = 'position:absolute;top:2px;right:2px;padding:0 0.3rem;font-size:0.7rem;';
+        rm.onclick = () => {
+          notesPendingFiles.splice(i, 1);
+          renderNotesImagePreview();
+        };
+        wrap.appendChild(rm);
+        box.appendChild(wrap);
+      });
+    }
+
+    async function uploadNoteImage(file) {
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const path = `${currentUser.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error } = await sb.storage.from('commish-notes').upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type || 'image/jpeg'
+      });
+      if (error) throw error;
+      const { data } = sb.storage.from('commish-notes').getPublicUrl(path);
+      return { url: data.publicUrl, path };
+    }
+
+    async function renderNotes() {
+      const list = document.getElementById('notes-list');
+      const editor = document.getElementById('notes-admin-editor');
+      if (editor) {
+        if (currentUser?.isAdmin) editor.classList.remove('hidden');
+        else editor.classList.add('hidden');
+      }
+      list.innerHTML = '<p class="subtitle">Loading notes…</p>';
+      try {
+        const { data, error } = await sb
+          .from('commish_notes')
+          .select('id, body, images, created_at, updated_at, author_id')
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        const notes = data || [];
+        if (!notes.length) {
+          list.innerHTML = currentUser?.isAdmin
+            ? '<p class="subtitle">No notes yet. Use the form above to post the first one.</p>'
+            : '<p class="subtitle">No notes from the Commish yet.</p>';
+          return;
+        }
+        list.innerHTML = notes.map(n => {
+          const imgs = Array.isArray(n.images) ? n.images : [];
+          const imgHtml = imgs.length
+            ? `<div class="note-images">${imgs.map(im => {
+                const u = typeof im === 'string' ? im : im.url;
+                return u ? `<img src="${escapeHtml(u)}" alt="Note image" loading="lazy">` : '';
+              }).join('')}</div>`
+            : '';
+          const edited = n.updated_at && n.created_at && n.updated_at !== n.created_at
+            ? ` · edited ${formatNoteTime(n.updated_at)}`
+            : '';
+          const actions = currentUser?.isAdmin
+            ? `<div class="note-actions">
+                <button class="btn btn-sm btn-outline" data-note-edit="${n.id}">Edit</button>
+                <button class="btn btn-sm btn-outline" data-note-del="${n.id}">Delete</button>
+              </div>`
+            : '';
+          return `<div class="card note-card" data-note-id="${n.id}">
+            <div class="note-meta">${formatNoteTime(n.created_at)}${edited}</div>
+            <div class="note-body">${escapeHtml(n.body)}</div>
+            ${imgHtml}
+            ${actions}
+          </div>`;
+        }).join('');
+
+        // Lightbox click
+        list.querySelectorAll('.note-images img').forEach(img => {
+          img.onclick = () => window.open(img.src, '_blank');
+        });
+
+        list.querySelectorAll('[data-note-edit]').forEach(btn => {
+          btn.onclick = () => {
+            const note = notes.find(x => x.id === btn.dataset.noteEdit);
+            if (!note) return;
+            document.getElementById('notes-edit-id').value = note.id;
+            document.getElementById('notes-body').value = note.body || '';
+            notesPendingFiles = [];
+            notesExistingImages = Array.isArray(note.images)
+              ? note.images.map(im => typeof im === 'string' ? { url: im } : im)
+              : [];
+            document.getElementById('notes-images').value = '';
+            renderNotesImagePreview();
+            document.getElementById('notes-save-btn').textContent = 'Update note';
+            document.getElementById('notes-cancel-edit').classList.remove('hidden');
+            document.getElementById('notes-admin-editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          };
+        });
+        list.querySelectorAll('[data-note-del]').forEach(btn => {
+          btn.onclick = async () => {
+            if (!confirm('Delete this note?')) return;
+            const id = btn.dataset.noteDel;
+            const { error: delErr } = await sb.from('commish_notes').delete().eq('id', id);
+            if (delErr) {
+              alert('Could not delete: ' + delErr.message);
+              return;
+            }
+            if (document.getElementById('notes-edit-id').value === id) resetNotesEditor();
+            renderNotes();
+          };
+        });
+      } catch (e) {
+        console.error(e);
+        list.innerHTML = `<p class="subtitle" style="color:var(--danger);">Could not load notes: ${escapeHtml(e.message || e)}. If this is the first time, run the Commish Notes SQL setup.</p>`;
+      }
+    }
+
+    document.getElementById('notes-images').onchange = (e) => {
+      const files = Array.from(e.target.files || []);
+      for (const f of files) {
+        if (!/^image\/(jpeg|png|gif|webp)$/i.test(f.type)) {
+          alert('Only JPEG, PNG, GIF, or WebP images are allowed.');
+          continue;
+        }
+        if (f.size > 5 * 1024 * 1024) {
+          alert(`${f.name} is over 5MB — skip or compress it.`);
+          continue;
+        }
+        notesPendingFiles.push(f);
+      }
+      e.target.value = '';
+      renderNotesImagePreview();
+    };
+
+    document.getElementById('notes-cancel-edit').onclick = () => resetNotesEditor();
+
+    document.getElementById('notes-save-btn').onclick = async () => {
+      if (!currentUser?.isAdmin) {
+        alert('Admin only.');
+        return;
+      }
+      const body = document.getElementById('notes-body').value.trim();
+      const editId = document.getElementById('notes-edit-id').value;
+      const errEl = document.getElementById('notes-save-err');
+      const okEl = document.getElementById('notes-save-msg');
+      errEl.classList.add('hidden');
+      okEl.classList.add('hidden');
+      if (!body && !notesExistingImages.length && !notesPendingFiles.length) {
+        errEl.textContent = 'Write a message or add an image.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      const btn = document.getElementById('notes-save-btn');
+      btn.disabled = true;
+      btn.textContent = editId ? 'Updating…' : 'Posting…';
+      try {
+        const uploaded = [];
+        for (const f of notesPendingFiles) {
+          uploaded.push(await uploadNoteImage(f));
+        }
+        const images = [...notesExistingImages, ...uploaded];
+        const payload = {
+          body,
+          images,
+          updated_at: new Date().toISOString(),
+          author_id: currentUser.id
+        };
+        if (editId) {
+          const { error } = await sb.from('commish_notes').update(payload).eq('id', editId);
+          if (error) throw error;
+        } else {
+          const { error } = await sb.from('commish_notes').insert(payload);
+          if (error) throw error;
+        }
+        resetNotesEditor();
+        okEl.textContent = editId ? 'Note updated.' : 'Note posted.';
+        okEl.classList.remove('hidden');
+        setTimeout(() => okEl.classList.add('hidden'), 2500);
+        await renderNotes();
+      } catch (e) {
+        console.error(e);
+        errEl.textContent = (e.message || String(e)) +
+          (String(e.message || '').includes('commish') ? ' — run the SQL setup in Supabase.' : '');
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = document.getElementById('notes-edit-id').value ? 'Update note' : 'Post note';
+      }
+    };
 
     // Auto-pick away team for any locked game the user never selected
     function applyLockedDefaults() {
