@@ -239,7 +239,7 @@
     <div class="nav-brand">🏈 College Pick'em</div>
     <div class="nav-links" id="nav-links">
       <button data-view="picks" class="active">My Picks</button>
-      <button data-view="others">Others' Picks</button>
+      <button data-view="others">Group Picks</button>
       <button data-view="standings">Standings</button>
       <button data-view="admin" id="nav-admin-btn" class="hidden">Admin</button>
     </div>
@@ -329,7 +329,7 @@
 
     <!-- OTHERS' PICKS -->
     <div id="view-others" class="view-section">
-      <h1>Others' Picks – Week 0</h1>
+      <h1 id="group-picks-title">Group Picks</h1>
       <p class="subtitle">Picks become visible after that game’s kickoff. Live scores shown when available.</p>
       <div id="others-content"></div>
     </div>
@@ -1372,6 +1372,9 @@
 
     async function renderOthers() {
       const box = document.getElementById('others-content');
+      const title = document.getElementById('group-picks-title');
+      const w = currentWeekMeta();
+      if (title) title.textContent = w ? `Group Picks · ${w.label}` : 'Group Picks';
       box.innerHTML = '<p class="subtitle">Loading players…</p>';
 
       if (!activeWeekId) {
