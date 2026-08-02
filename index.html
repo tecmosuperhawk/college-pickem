@@ -226,6 +226,17 @@
     tr:hover td { background: rgba(255,255,255,0.03); }
     .rank-1 { color: var(--star); font-weight: 700; }
     .my-row { background: rgba(59,130,246,0.12); }
+    .winner-row { background: rgba(234,179,8,0.16); }
+    .winner-row td:first-child { color: var(--star); font-weight: 800; }
+    .winner-banner {
+      margin-bottom: 0.75rem; padding: 0.65rem 0.9rem; border-radius: 8px;
+      background: rgba(234,179,8,0.15); border: 1px solid rgba(234,179,8,0.35);
+      color: var(--text); font-size: 0.9rem;
+    }
+    .winner-banner strong { color: var(--star); }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable .sort-ind { opacity: 0.5; font-size: 0.75em; }
 
     /* Admin */
     .admin-game-row {
@@ -362,10 +373,18 @@
         <button class="btn btn-sm" id="stand-week">Current Week</button>
         <button class="btn btn-sm btn-outline" id="stand-overall">Overall Season</button>
       </div>
+      <div id="standings-winner-banner" class="hidden"></div>
       <div class="card">
         <table>
           <thead>
-            <tr><th>#</th><th>Player</th><th>Record</th><th>Points</th><th>5★</th></tr>
+            <tr id="standings-head">
+              <th>#</th>
+              <th>Player</th>
+              <th>Record</th>
+              <th class="sortable" data-sort="pts">Points <span class="sort-ind"></span></th>
+              <th class="sortable" data-sort="star">5★ <span class="sort-ind"></span></th>
+              <th>TB</th>
+            </tr>
           </thead>
           <tbody id="standings-body"></tbody>
         </table>
@@ -1127,7 +1146,13 @@
       const container = document.getElementById('picks-games');
       container.innerHTML = '';
       if (!games.length) {
-        container.innerHTML = '<p class="subtitle">No games loaded. Check that Week 0 is active and your account can read the games table. Open the browser console (F12) for details.</p>';
+        const w = currentWeekMeta();
+        const label = w ? w.label : 'This week';
+        container.innerHTML = `<p class="subtitle">${label} has no games posted yet. Check back once the admin publishes the slate.</p>`;
+        const tbCard = document.getElementById('bottom-tiebreaker');
+        if (tbCard) tbCard.classList.add('hidden');
+        refreshFiveStarSelect();
+        updateEntryStatus();
         return;
       }
       games.forEach(g => {
@@ -1447,6 +1472,11 @@
         box.innerHTML = '<p class="subtitle">No active week.</p>';
         return;
       }
+      if (!games.length) {
+        const w = currentWeekMeta();
+        box.innerHTML = `<p class="subtitle">${w ? w.label : 'This week'} has no games posted yet.</p>`;
+        return;
+      }
 
       try {
         const { data: sheets, error: sErr } = await sb
@@ -1594,21 +1624,167 @@
     /** Did the selected side cover? odds is home line (e.g. -6.5). Half-points → no pushes. */
     function coveredSpread(selection, odds, awayScore, homeScore) {
       if (awayScore == null || homeScore == null) return null;
-      // Home covers if homeScore + odds > awayScore
       const homeCovers = (homeScore + Number(odds)) > awayScore;
       if (selection === 'home') return homeCovers;
       if (selection === 'away') return !homeCovers;
       return null;
     }
 
+    let standingsMode = 'week';
+    let standingsSort = { key: 'pts', dir: 'desc' }; // overall sortable
+    let standingsCacheRows = [];
+
+    function weekIsFinal(gameList) {
+      if (!gameList || !gameList.length) return false;
+      return gameList.every(g => {
+        const st = (g.status || '').toLowerCase();
+        if (st === 'final') return true;
+        if (g.away_score != null && g.home_score != null && isLocked(g)) return true;
+        return false;
+      });
+    }
+
+    function tbActualTotal(gameList) {
+      const tb = (gameList || []).find(g => g.isTiebreaker || g.is_tiebreaker);
+      if (!tb || tb.away_score == null || tb.home_score == null) return null;
+      return Number(tb.away_score) + Number(tb.home_score);
+    }
+
+    function formatTbCell(r, weekFinal, actualTotal) {
+      if (!r.submitted) return '—';
+      if (r.tbGuess == null || isNaN(r.tbGuess)) return '—';
+      if (!weekFinal || actualTotal == null) return String(r.tbGuess);
+      const diff = Math.abs(r.tbGuess - actualTotal);
+      const diffStr = diff === 0 ? 'exact' : (diff === Math.floor(diff) ? String(diff) : diff.toFixed(1));
+      return `${r.tbGuess} <span style="color:var(--muted);font-size:0.8rem;">(${diffStr} off)</span>`;
+    }
+
+    function paintStandingsTable(rows, { weekFinal, actualTotal, showTb, winners }) {
+      const body = document.getElementById('standings-body');
+      const banner = document.getElementById('standings-winner-banner');
+      const winnerSet = new Set((winners || []).map(w => w.userId));
+
+      if (banner) {
+        if (weekFinal && winners && winners.length) {
+          const names = winners.map(w => w.name).join(' & ');
+          const tbNote = actualTotal != null
+            ? ` · TB actual ${actualTotal}`
+            : '';
+          banner.className = 'winner-banner';
+          banner.innerHTML = winners.length > 1
+            ? `🏆 Week co-winners: <strong>${names}</strong>${tbNote}`
+            : `🏆 Week winner: <strong>${names}</strong>${tbNote}`;
+        } else {
+          banner.className = 'hidden';
+          banner.innerHTML = '';
+        }
+      }
+
+      // Rank: shared ranks for ties on current sort for display in week mode by pts then tb
+      body.innerHTML = rows.map((r, i) => {
+        const isWinner = winnerSet.has(r.userId);
+        const classes = [
+          r.userId === currentUser?.id ? 'my-row' : '',
+          isWinner ? 'winner-row' : ''
+        ].filter(Boolean).join(' ');
+        const rankLabel = r.submitted ? (r.rank != null ? r.rank : i + 1) : '—';
+        const nameExtra = [
+          r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>',
+          r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : '',
+          isWinner ? ' <span style="color:var(--star);font-size:0.75rem;">🏆</span>' : ''
+        ].join('');
+        const starCell = r.submitted
+          ? (typeof r.star === 'number'
+              ? (r.star > 0 ? `<span style="color:var(--star);font-weight:700;">${r.star}</span>` : r.star)
+              : r.star)
+          : '—';
+        return `<tr class="${classes}">
+          <td class="${isWinner || (i === 0 && r.submitted) ? 'rank-1' : ''}">${rankLabel}</td>
+          <td>${r.name}${nameExtra}</td>
+          <td>${r.record}</td>
+          <td>${r.pts}</td>
+          <td>${starCell}</td>
+          <td>${showTb ? formatTbCell(r, weekFinal, actualTotal) : '—'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function assignRanks(rows, cmp) {
+      // rows already sorted; assign competition ranks
+      let rank = 0;
+      let prevKey = null;
+      rows.forEach((r, i) => {
+        if (!r.submitted) {
+          r.rank = null;
+          return;
+        }
+        const key = cmp(r);
+        if (prevKey === null || key !== prevKey) {
+          rank = i + 1 - rows.slice(0, i).filter(x => !x.submitted).length;
+          // simpler: count submitted before this
+          const submittedBefore = rows.slice(0, i).filter(x => x.submitted).length;
+          rank = submittedBefore + 1;
+          prevKey = key;
+        }
+        r.rank = rank;
+      });
+    }
+
+    function sortStandingsRows(rows, key, dir) {
+      const mult = dir === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
+        if (!a.submitted) return 0;
+        if (key === 'star') {
+          const as = typeof a.star === 'number' ? a.star : -1;
+          const bs = typeof b.star === 'number' ? b.star : -1;
+          if (as !== bs) return (as - bs) * mult;
+          const ap = typeof a.pts === 'number' ? a.pts : -1;
+          const bp = typeof b.pts === 'number' ? b.pts : -1;
+          if (ap !== bp) return (bp - ap); // secondary always pts desc
+        } else {
+          const ap = typeof a.pts === 'number' ? a.pts : -1;
+          const bp = typeof b.pts === 'number' ? b.pts : -1;
+          if (ap !== bp) return (ap - bp) * mult;
+          const as = typeof a.star === 'number' ? a.star : -1;
+          const bs = typeof b.star === 'number' ? b.star : -1;
+          if (as !== bs) return (bs - as);
+        }
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    function updateSortHeaders() {
+      document.querySelectorAll('#standings-head th.sortable').forEach(th => {
+        const ind = th.querySelector('.sort-ind');
+        if (!ind) return;
+        if (standingsMode !== 'overall') {
+          ind.textContent = '';
+          return;
+        }
+        if (th.dataset.sort === standingsSort.key) {
+          ind.textContent = standingsSort.dir === 'desc' ? '▼' : '▲';
+        } else {
+          ind.textContent = '';
+        }
+      });
+    }
+
     async function renderStandings(mode) {
+      if (mode) standingsMode = mode;
+      mode = standingsMode;
       document.getElementById('stand-week').className = mode === 'week' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
       document.getElementById('stand-overall').className = mode === 'overall' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
       const body = document.getElementById('standings-body');
-      body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);">Loading…</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);">Loading…</td></tr>';
+      const banner = document.getElementById('standings-winner-banner');
+      if (banner && mode !== 'week') {
+        banner.className = 'hidden';
+        banner.innerHTML = '';
+      }
+      updateSortHeaders();
 
       try {
-        // All profiles (possible entrants)
         const { data: profiles, error: pErr } = await sb
           .from('profiles')
           .select('id, display_name');
@@ -1616,13 +1792,19 @@
 
         if (mode === 'week') {
           if (!activeWeekId) {
-            body.innerHTML = '<tr><td colspan="5">No active week.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6">No active week.</td></tr>';
+            return;
+          }
+          if (!games.length) {
+            const w = currentWeekMeta();
+            body.innerHTML = `<tr><td colspan="6" style="color:var(--muted);">${w ? w.label : 'This week'} has no games posted yet.</td></tr>`;
+            if (banner) { banner.className = 'hidden'; banner.innerHTML = ''; }
             return;
           }
 
           const { data: sheets, error: sErr } = await sb
             .from('pick_sheets')
-            .select('id, user_id, submitted_at, five_star_game_id, five_star_side')
+            .select('id, user_id, submitted_at, five_star_game_id, five_star_side, total_points_guess')
             .eq('week_id', activeWeekId);
           if (sErr) throw sErr;
 
@@ -1647,9 +1829,10 @@
             picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
           });
 
-          // Game results from loaded games array (scores from DB)
           const gameById = {};
           games.forEach(g => { gameById[g.id] = g; });
+          const finalWeek = weekIsFinal(games);
+          const actualTotal = tbActualTotal(games);
 
           const rows = (profiles || []).map(prof => {
             const sheet = sheetByUser[prof.id];
@@ -1662,12 +1845,14 @@
                 record: '—',
                 pts: '—',
                 star: '—',
-                wins: -1
+                tbGuess: null,
+                tbDist: null,
+                starHit: false
               };
             }
 
             const picks = picksBySheet[sheet.id] || {};
-            let wins = 0, losses = 0, starPts = 0;
+            let wins = 0, losses = 0, starHit = 0;
 
             Object.keys(picks).forEach(gid => {
               const g = gameById[gid];
@@ -1675,46 +1860,70 @@
               const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
               if (result === true) {
                 wins++;
-                // 5★ correct → extra point (optional bonus)
+                // 5★ tracked separately — does NOT add to weekly points / winner
                 if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
-                  starPts = 1;
+                  starHit = 1;
                 }
               } else if (result === false) {
                 losses++;
               }
             });
 
-            const pts = wins + starPts;
+            const tbGuess = sheet.total_points_guess;
+            let tbDist = null;
+            if (actualTotal != null && tbGuess != null && !isNaN(Number(tbGuess))) {
+              tbDist = Math.abs(Number(tbGuess) - actualTotal);
+            }
+
             return {
               name: prof.display_name,
               userId: prof.id,
               submitted: true,
               record: `${wins}-${losses}`,
-              pts,
-              star: starPts,
-              wins
+              pts: wins,
+              star: starHit,
+              starHit: !!starHit,
+              tbGuess: tbGuess != null ? Number(tbGuess) : null,
+              tbDist
             };
           });
 
+          // Sort: pts desc, then closer TB, then name
           rows.sort((a, b) => {
             if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
-            const ap = typeof a.pts === 'number' ? a.pts : -1;
-            const bp = typeof b.pts === 'number' ? b.pts : -1;
-            if (bp !== ap) return bp - ap;
+            if (!a.submitted) return 0;
+            if (b.pts !== a.pts) return b.pts - a.pts;
+            const ad = a.tbDist == null ? Infinity : a.tbDist;
+            const bd = b.tbDist == null ? Infinity : b.tbDist;
+            if (ad !== bd) return ad - bd;
             return a.name.localeCompare(b.name);
           });
 
-          body.innerHTML = rows.map((r, i) => `
-            <tr class="${r.userId === currentUser?.id ? 'my-row' : ''}">
-              <td class="${i === 0 && r.submitted ? 'rank-1' : ''}">${r.submitted ? i + 1 : '—'}</td>
-              <td>${r.name}${r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'}${r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : ''}</td>
-              <td>${r.record}</td>
-              <td>${r.pts}</td>
-              <td>${r.star}</td>
-            </tr>`).join('');
+          assignRanks(rows, r => `${r.pts}|${r.tbDist == null ? 'inf' : r.tbDist}`);
+
+          let winners = [];
+          if (finalWeek) {
+            const submitted = rows.filter(r => r.submitted);
+            if (submitted.length) {
+              const topPts = submitted[0].pts;
+              const topDist = submitted[0].tbDist == null ? Infinity : submitted[0].tbDist;
+              winners = submitted.filter(r =>
+                r.pts === topPts &&
+                (r.tbDist == null ? Infinity : r.tbDist) === topDist
+              );
+            }
+          }
+
+          standingsCacheRows = rows;
+          paintStandingsTable(rows, {
+            weekFinal: finalWeek,
+            actualTotal,
+            showTb: true,
+            winners
+          });
 
         } else {
-          // Overall: sum week points across all submitted sheets (all weeks)
+          // Overall season
           const { data: allSheets, error: sErr } = await sb
             .from('pick_sheets')
             .select('id, user_id, week_id, submitted_at, five_star_game_id, five_star_side')
@@ -1732,7 +1941,6 @@
             pickRows = pr || [];
           }
 
-          // Load all games with scores for overall
           const { data: allGames, error: gErr } = await sb
             .from('games')
             .select('id, odds, away_score, home_score');
@@ -1746,7 +1954,7 @@
             picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
           });
 
-          const totals = {}; // userId -> { wins, losses, star, pts }
+          const totals = {};
           (profiles || []).forEach(p => {
             totals[p.id] = { name: p.display_name, wins: 0, losses: 0, star: 0, pts: 0, any: false };
           });
@@ -1762,10 +1970,9 @@
               const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
               if (result === true) {
                 t.wins++;
-                t.pts++;
+                t.pts++; // covers only
                 if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
-                  t.star++;
-                  t.pts++;
+                  t.star++; // separate 5★ tally — does not add points
                 }
               } else if (result === false) {
                 t.losses++;
@@ -1781,34 +1988,54 @@
               submitted: t.any,
               record: t.any ? `${t.wins}-${t.losses}` : '—',
               pts: t.any ? t.pts : '—',
-              star: t.any ? t.star : '—'
+              star: t.any ? t.star : '—',
+              tbGuess: null,
+              tbDist: null
             };
           });
 
-          rows.sort((a, b) => {
-            if (a.submitted !== b.submitted) return a.submitted ? -1 : 1;
-            const ap = typeof a.pts === 'number' ? a.pts : -1;
-            const bp = typeof b.pts === 'number' ? b.pts : -1;
-            if (bp !== ap) return bp - ap;
-            return a.name.localeCompare(b.name);
-          });
+          sortStandingsRows(rows, standingsSort.key, standingsSort.dir);
+          assignRanks(rows, r => standingsSort.key === 'star'
+            ? `${r.star}|${r.pts}`
+            : `${r.pts}|${r.star}`);
 
-          body.innerHTML = rows.map((r, i) => `
-            <tr class="${r.userId === currentUser?.id ? 'my-row' : ''}">
-              <td class="${i === 0 && r.submitted ? 'rank-1' : ''}">${r.submitted ? i + 1 : '—'}</td>
-              <td>${r.name}${r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'}${r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : ''}</td>
-              <td>${r.record}</td>
-              <td>${r.pts}</td>
-              <td>${r.star}</td>
-            </tr>`).join('');
+          standingsCacheRows = rows;
+          paintStandingsTable(rows, {
+            weekFinal: false,
+            actualTotal: null,
+            showTb: false,
+            winners: []
+          });
         }
       } catch (e) {
         console.error('renderStandings failed', e);
-        body.innerHTML = `<tr><td colspan="5" style="color:var(--danger);">Could not load standings: ${e.message || e}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="6" style="color:var(--danger);">Could not load standings: ${e.message || e}</td></tr>`;
       }
     }
-    document.getElementById('stand-week').onclick = () => renderStandings('week');
-    document.getElementById('stand-overall').onclick = () => renderStandings('overall');
+
+    document.getElementById('stand-week').onclick = () => {
+      standingsSort = { key: 'pts', dir: 'desc' };
+      renderStandings('week');
+    };
+    document.getElementById('stand-overall').onclick = () => {
+      standingsSort = { key: 'pts', dir: 'desc' };
+      renderStandings('overall');
+    };
+    document.querySelectorAll('#standings-head th.sortable').forEach(th => {
+      th.onclick = () => {
+        if (standingsMode !== 'overall') {
+          // Switch to overall when sorting by these columns
+          standingsMode = 'overall';
+        }
+        const key = th.dataset.sort;
+        if (standingsSort.key === key) {
+          standingsSort.dir = standingsSort.dir === 'desc' ? 'asc' : 'desc';
+        } else {
+          standingsSort = { key, dir: 'desc' };
+        }
+        renderStandings('overall');
+      };
+    });
 
     // ---------- ADMIN ----------
     // FBS (Wikipedia 2026) + FCS school names for admin dropdowns
