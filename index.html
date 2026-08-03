@@ -6,7 +6,7 @@
   <title>College Pick'em 2026</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    :root {
+    :root, html[data-theme="dark"] {
       --bg: #0f172a;
       --card: #1e293b;
       --border: #334155;
@@ -22,6 +22,25 @@
       --tiebreaker: #0ea5e9;
       --star: #eab308;
       --locked: #64748b;
+      --input-bg: #0f172a;
+    }
+    html[data-theme="light"] {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --away: #d97706;
+      --home: #7c3aed;
+      --pick-bg: #dbeafe;
+      --tiebreaker: #0284c7;
+      --star: #ca8a04;
+      --locked: #94a3b8;
+      --input-bg: #f8fafc;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -96,7 +115,7 @@
       font-size: 0.95rem;
       border: 1px solid var(--border);
       border-radius: 8px;
-      background: var(--bg);
+      background: var(--input-bg);
       color: var(--text);
     }
     input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
@@ -294,6 +313,7 @@
       <button data-view="admin" id="nav-admin-btn" class="hidden">Admin</button>
     </div>
     <div class="nav-user" id="nav-user">
+      <button type="button" id="theme-toggle" class="btn-sm btn-outline" title="Toggle light / dark mode">🌙</button>
       <span id="user-display"></span>
       <button id="logout-btn" class="btn-sm btn-outline">Logout</button>
     </div>
@@ -433,6 +453,7 @@
               <th>Record</th>
               <th class="sortable" data-sort="pts">Points <span class="sort-ind"></span></th>
               <th class="sortable" data-sort="star">5★ <span class="sort-ind"></span></th>
+              <th id="standings-week-wins-th" class="sortable" data-sort="weekWins" title="Number of weekly wins">Weekly Wins <span class="sort-ind"></span></th>
               <th id="standings-tb-th">TB</th>
             </tr>
           </thead>
@@ -2062,12 +2083,14 @@
       return `${r.tbGuess} <span style="color:var(--muted);font-size:0.8rem;">(${diffStr} off)</span>`;
     }
 
-    function paintStandingsTable(rows, { weekFinal, actualTotal, showTb, winners }) {
+    function paintStandingsTable(rows, { weekFinal, actualTotal, showTb, showWeekWins, winners }) {
       const body = document.getElementById('standings-body');
       const banner = document.getElementById('standings-winner-banner');
       const winnerSet = new Set((winners || []).map(w => w.userId));
       const tbHead = document.getElementById('standings-tb-th');
+      const wwHead = document.getElementById('standings-week-wins-th');
       if (tbHead) tbHead.style.display = showTb ? '' : 'none';
+      if (wwHead) wwHead.style.display = showWeekWins ? '' : 'none';
 
       if (banner) {
         if (weekFinal && winners && winners.length) {
@@ -2102,12 +2125,20 @@
               ? (r.star > 0 ? `<span style="color:var(--star);font-weight:700;">${r.star}</span>` : r.star)
               : r.star)
           : '—';
+        let weekWinsCell = '';
+        if (showWeekWins) {
+          const count = typeof r.weekWins === 'number' ? r.weekWins : 0;
+          const labels = (r.weekWinLabels || []).join(', ');
+          const title = labels ? ` title="${labels.replace(/"/g, '&quot;')}"` : ' title="No weekly wins yet"';
+          weekWinsCell = `<td${title} style="cursor:default;"><span style="font-weight:${count ? 700 : 400};color:${count ? 'var(--star)' : 'var(--muted)'};">${count}</span></td>`;
+        }
         return `<tr class="${classes}">
           <td class="${isWinner || (i === 0 && r.submitted) ? 'rank-1' : ''}">${rankLabel}</td>
           <td>${r.name}${nameExtra}</td>
           <td>${r.record}</td>
           <td>${r.pts}</td>
           <td>${starCell}</td>
+          ${weekWinsCell}
           ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal)}</td>` : ''}
         </tr>`;
       }).join('');
@@ -2145,7 +2176,14 @@
           if (as !== bs) return (as - bs) * mult;
           const ap = typeof a.pts === 'number' ? a.pts : -1;
           const bp = typeof b.pts === 'number' ? b.pts : -1;
-          if (ap !== bp) return (bp - ap); // secondary always pts desc
+          if (ap !== bp) return (bp - ap);
+        } else if (key === 'weekWins') {
+          const aw = typeof a.weekWins === 'number' ? a.weekWins : 0;
+          const bw = typeof b.weekWins === 'number' ? b.weekWins : 0;
+          if (aw !== bw) return (aw - bw) * mult;
+          const ap = typeof a.pts === 'number' ? a.pts : -1;
+          const bp = typeof b.pts === 'number' ? b.pts : -1;
+          if (ap !== bp) return (bp - ap);
         } else {
           const ap = typeof a.pts === 'number' ? a.pts : -1;
           const bp = typeof b.pts === 'number' ? b.pts : -1;
@@ -2323,6 +2361,7 @@
             weekFinal: finalWeek,
             actualTotal,
             showTb: true,
+            showWeekWins: false,
             winners
           });
 
@@ -2330,7 +2369,7 @@
           // Overall season
           const { data: allSheets, error: sErr } = await sb
             .from('pick_sheets')
-            .select('id, user_id, week_id, submitted_at, five_star_game_id, five_star_side')
+            .select('id, user_id, week_id, submitted_at, five_star_game_id, five_star_side, total_points_guess')
             .not('submitted_at', 'is', null);
           if (sErr) throw sErr;
 
@@ -2347,7 +2386,7 @@
 
           const { data: allGames, error: gErr } = await sb
             .from('games')
-            .select('id, odds, away_score, home_score');
+            .select('id, week_id, odds, away_score, home_score, status, is_tiebreaker, kickoff_at');
           if (gErr) throw gErr;
           const gameById = {};
           (allGames || []).forEach(g => { gameById[g.id] = g; });
@@ -2360,7 +2399,10 @@
 
           const totals = {};
           (profiles || []).forEach(p => {
-            totals[p.id] = { name: p.display_name, wins: 0, losses: 0, star: 0, pts: 0, any: false };
+            totals[p.id] = {
+              name: p.display_name, wins: 0, losses: 0, star: 0, pts: 0, any: false,
+              weekWins: 0, weekWinLabels: []
+            };
           });
 
           (allSheets || []).forEach(sheet => {
@@ -2374,13 +2416,83 @@
               const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
               if (result === true) {
                 t.wins++;
-                t.pts++; // covers only
+                t.pts++;
                 if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
-                  t.star++; // separate 5★ tally — does not add points
+                  t.star++;
                 }
               } else if (result === false) {
                 t.losses++;
               }
+            });
+          });
+
+          // Weekly winners: for each fully final week, same rules as weekly standings
+          const weeksList = (allWeeks && allWeeks.length)
+            ? allWeeks
+            : (await sb.from('weeks').select('id, label, week_number').order('week_number')).data || [];
+
+          const gamesByWeek = {};
+          (allGames || []).forEach(g => {
+            if (!gamesByWeek[g.week_id]) gamesByWeek[g.week_id] = [];
+            // map to shape weekIsFinal / tbActualTotal expect
+            gamesByWeek[g.week_id].push({
+              id: g.id,
+              odds: g.odds,
+              away_score: g.away_score,
+              home_score: g.home_score,
+              status: g.status,
+              kickoff: g.kickoff_at,
+              isTiebreaker: !!g.is_tiebreaker
+            });
+          });
+
+          const sheetsByWeek = {};
+          (allSheets || []).forEach(s => {
+            if (!sheetsByWeek[s.week_id]) sheetsByWeek[s.week_id] = [];
+            sheetsByWeek[s.week_id].push(s);
+          });
+
+          weeksList.forEach(w => {
+            const wGames = gamesByWeek[w.id] || [];
+            if (!wGames.length || !weekIsFinal(wGames)) return;
+            const actualTotal = tbActualTotal(wGames);
+            const wSheets = sheetsByWeek[w.id] || [];
+            if (!wSheets.length) return;
+
+            const scored = wSheets.map(sheet => {
+              const picks = picksBySheet[sheet.id] || {};
+              let wins = 0;
+              Object.keys(picks).forEach(gid => {
+                const g = gameById[gid];
+                if (!g || g.week_id !== w.id) return;
+                if (coveredSpread(picks[gid], g.odds, g.away_score, g.home_score) === true) wins++;
+              });
+              const tbGuess = sheet.total_points_guess;
+              let tbDist = null;
+              if (actualTotal != null && tbGuess != null && !isNaN(Number(tbGuess))) {
+                tbDist = Math.abs(Number(tbGuess) - actualTotal);
+              }
+              return { userId: sheet.user_id, pts: wins, tbDist };
+            });
+
+            scored.sort((a, b) => {
+              if (b.pts !== a.pts) return b.pts - a.pts;
+              const ad = a.tbDist == null ? Infinity : a.tbDist;
+              const bd = b.tbDist == null ? Infinity : b.tbDist;
+              return ad - bd;
+            });
+            if (!scored.length) return;
+            const topPts = scored[0].pts;
+            const topDist = scored[0].tbDist == null ? Infinity : scored[0].tbDist;
+            const weekWinners = scored.filter(r =>
+              r.pts === topPts && (r.tbDist == null ? Infinity : r.tbDist) === topDist
+            );
+            const label = w.label || `Week ${w.week_number}`;
+            weekWinners.forEach(ww => {
+              const t = totals[ww.userId];
+              if (!t) return;
+              t.weekWins++;
+              t.weekWinLabels.push(label);
             });
           });
 
@@ -2393,21 +2505,26 @@
               record: t.any ? `${t.wins}-${t.losses}` : '—',
               pts: t.any ? t.pts : '—',
               star: t.any ? t.star : '—',
+              weekWins: t.weekWins || 0,
+              weekWinLabels: t.weekWinLabels || [],
               tbGuess: null,
               tbDist: null
             };
           });
 
           sortStandingsRows(rows, standingsSort.key, standingsSort.dir);
-          assignRanks(rows, r => standingsSort.key === 'star'
-            ? `${r.star}|${r.pts}`
-            : `${r.pts}|${r.star}`);
+          assignRanks(rows, r => {
+            if (standingsSort.key === 'star') return `${r.star}|${r.pts}`;
+            if (standingsSort.key === 'weekWins') return `${r.weekWins}|${r.pts}`;
+            return `${r.pts}|${r.star}`;
+          });
 
           standingsCacheRows = rows;
           paintStandingsTable(rows, {
             weekFinal: false,
             actualTotal: null,
             showTb: false,
+            showWeekWins: true,
             winners: []
           });
         }
@@ -3191,6 +3308,27 @@
     function renderAll() {
       renderPicksEntry();
     }
+
+    // ---------- THEME (#11) ----------
+    function applyTheme(theme) {
+      const t = theme === 'light' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      try { localStorage.setItem('pickem-theme', t); } catch (_) {}
+      const btn = document.getElementById('theme-toggle');
+      if (btn) {
+        btn.textContent = t === 'light' ? '☀️' : '🌙';
+        btn.title = t === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+      }
+    }
+    (function initTheme() {
+      let saved = 'dark';
+      try { saved = localStorage.getItem('pickem-theme') || 'dark'; } catch (_) {}
+      applyTheme(saved);
+    })();
+    document.getElementById('theme-toggle').onclick = () => {
+      const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+      applyTheme(cur === 'light' ? 'dark' : 'light');
+    };
 
     // ---------- INIT ----------
     document.getElementById('main-nav').style.display = 'none';
