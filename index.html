@@ -255,6 +255,21 @@
     #picks-games {
       padding-bottom: 0.5rem;
     }
+    .next-lock-banner {
+      margin: 0 0 0.85rem;
+      padding: 0.55rem 0.85rem;
+      border-radius: 8px;
+      background: rgba(59,130,246,0.12);
+      border: 1px solid rgba(59,130,246,0.35);
+      color: var(--text);
+      font-size: 0.88rem;
+    }
+    .next-lock-banner strong { color: var(--accent); }
+    .override-pick-row {
+      display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+      padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
+    }
+    .override-pick-row select { max-width: 140px; }
 
     /* Tables */
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -467,6 +482,7 @@
       <h1 id="picks-week-title">Picks</h1>
       <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
       <div id="week-tabs" class="week-tabs"></div>
+      <div id="next-lock-banner" class="next-lock-banner hidden"></div>
       <div id="picks-games"></div>
       <div class="card hidden" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
         <h3 id="tb-title" style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
@@ -592,6 +608,31 @@
           <span class="success-msg hidden" id="admin-save-msg">Slate saved.</span>
         </div>
       </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <strong>Override player picks</strong>
+        <p style="font-size:0.8rem;color:var(--muted);margin:0.35rem 0 0.75rem;">
+          Fix a player’s picks, TB, or 5★ for the week selected above. Saves directly to the database.
+        </p>
+        <div class="form-row">
+          <label>Player</label>
+          <select id="admin-override-user"><option value="">— Select player —</option></select>
+        </div>
+        <div id="admin-override-panel" class="hidden">
+          <div id="admin-override-games" style="margin-bottom:0.75rem;"></div>
+          <div class="form-row">
+            <label>Tiebreaker total</label>
+            <input type="number" id="admin-override-tb" min="0" max="200" step="1" placeholder="e.g. 52" style="max-width:120px;">
+          </div>
+          <div class="form-row">
+            <label>5★ pick</label>
+            <select id="admin-override-star"><option value="">— None —</option></select>
+          </div>
+          <button class="btn" id="admin-override-save">Save player picks</button>
+          <span class="success-msg hidden" id="admin-override-msg">Saved.</span>
+          <span class="error hidden" id="admin-override-err"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -674,6 +715,8 @@
       }
     })();
     let myPicks = {};       // { [gameId]: 'away'|'home' }
+    let picksDirty = false; // unsaved local changes
+    let adminOverride = { userId: null, picks: {}, tb: null, star: '', sheetId: null };
     let myTotal = null;
     let myStar = '';
     let submitted = false;
@@ -739,8 +782,20 @@
 
     let myPickSheetId = null;
 
+    function markPicksDirty() {
+      picksDirty = true;
+    }
+    function clearPicksDirty() {
+      picksDirty = false;
+    }
+    function confirmLeavePicks(message) {
+      if (!picksDirty) return true;
+      return confirm(message || 'You have unsaved picks. Leave without saving?');
+    }
+
     async function loadMyData() {
       myPicks = {}; myTotal = null; myStar = ''; submitted = false; myPickSheetId = null;
+      clearPicksDirty();
       if (!currentUser || !activeWeekId) return;
       try {
         const { data: sheet, error } = await sb
@@ -881,6 +936,7 @@
         }
 
         submitted = true;
+        clearPicksDirty();
         return true;
       } catch (e) {
         console.error('saveMyData failed', e);
@@ -997,6 +1053,7 @@
     }
 
     async function switchWeek(weekId, { refreshView } = {}) {
+      if (weekId !== activeWeekId && !confirmLeavePicks()) return;
       if (!weekId || weekId === activeWeekId) {
         // still re-render current view if requested
         if (refreshView) await refreshActiveView();
@@ -1469,6 +1526,7 @@
     }
 
     document.getElementById('logout-btn').onclick = async () => {
+      if (!confirmLeavePicks('You have unsaved picks. Log out without saving?')) return;
       try {
         await sb.auth.signOut();
       } catch (e) {
@@ -1481,6 +1539,7 @@
       myTotal = null;
       myStar = '';
       submitted = false;
+      clearPicksDirty();
       document.getElementById('main-nav').style.display = 'none';
       document.getElementById('user-display').textContent = '';
       showView('auth');
@@ -1490,6 +1549,8 @@
     document.querySelectorAll('#nav-links button').forEach(btn => {
       btn.onclick = () => {
         let v = btn.dataset.view;
+        const leavingPicks = document.getElementById('view-picks')?.classList.contains('active') && v !== 'picks';
+        if (leavingPicks && !confirmLeavePicks()) return;
         if (v === 'admin' && !currentUser?.isAdmin) {
           alert('Admin access only.');
           v = 'picks';
@@ -1501,6 +1562,12 @@
         if (v === 'notes') renderNotes();
         showView(v);
       };
+    });
+
+    window.addEventListener('beforeunload', (e) => {
+      if (!picksDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
     });
 
     // ---------- COMMISH NOTES ----------
@@ -1826,6 +1893,7 @@
         el.onclick = () => {
           const id = el.dataset.id; // UUID string from Supabase
           myPicks[id] = el.dataset.side;
+          markPicksDirty();
           // If 5★ was the other side of this game, clear it
           if (myStar && myStar.endsWith('|' + id)) {
             const starTeam = myStar.split('|')[0];
@@ -1844,6 +1912,7 @@
       // Sync both total-points inputs (in-game + bottom)
       function setTotalFromInput(val) {
         myTotal = val === '' ? null : parseInt(val, 10);
+        markPicksDirty();
         const top = document.getElementById('total-points');
         const bottom = document.getElementById('total-points-bottom');
         const display = (myTotal !== null && !isNaN(myTotal)) ? String(myTotal) : '';
@@ -1927,6 +1996,7 @@
       sel.onchange = () => {
         if (isFiveStarLocked()) return;
         myStar = sel.value;
+        markPicksDirty();
         updateEntryStatus();
       };
 
@@ -1948,9 +2018,32 @@
       }
     }
 
+    function updateNextLockBanner() {
+      const el = document.getElementById('next-lock-banner');
+      if (!el) return;
+      const upcoming = games
+        .filter(g => g.kickoff && !isLocked(g))
+        .map(g => ({ g, t: new Date(g.kickoff).getTime() }))
+        .filter(x => !isNaN(x.t))
+        .sort((a, b) => a.t - b.t);
+      if (!upcoming.length) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+      }
+      const { g, t } = upcoming[0];
+      const when = formatInAppTz(t, {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+      });
+      el.classList.remove('hidden');
+      el.innerHTML = `Next lock: <strong>Game ${g.num || ''} · ${g.away} @ ${g.home}</strong> · ${when} CT`;
+    }
+
     function updateEntryStatus() {
       applyLockedDefaults();
       refreshFiveStarSelect();
+      updateNextLockBanner();
       const openGames = games.filter(g => !isLocked(g));
       const openPicked = openGames.filter(g => myPicks[g.id]).length;
       const lockedCount = games.length - openGames.length;
@@ -2831,11 +2924,193 @@
         <option value="">— Team —</option>${options}</select>`;
     }
 
+    async function loadAdminOverrideUsers() {
+      const sel = document.getElementById('admin-override-user');
+      if (!sel || !currentUser?.isAdmin) return;
+      const prev = sel.value;
+      try {
+        const { data, error } = await sb.from('profiles').select('id, display_name').order('display_name');
+        if (error) throw error;
+        sel.innerHTML = '<option value="">— Select player —</option>' +
+          (data || []).map(p =>
+            `<option value="${p.id}">${escapeHtml(p.display_name || p.id.slice(0, 8))}</option>`
+          ).join('');
+        if (prev) sel.value = prev;
+      } catch (e) {
+        console.error(e);
+        sel.innerHTML = '<option value="">Could not load players</option>';
+      }
+    }
+
+    async function loadAdminOverrideSheet() {
+      const panel = document.getElementById('admin-override-panel');
+      const userId = document.getElementById('admin-override-user')?.value;
+      adminOverride = { userId: userId || null, picks: {}, tb: null, star: '', sheetId: null };
+      if (!userId || !activeWeekId) {
+        if (panel) panel.classList.add('hidden');
+        return;
+      }
+      panel.classList.remove('hidden');
+      const gamesBox = document.getElementById('admin-override-games');
+      gamesBox.innerHTML = '<p class="subtitle">Loading…</p>';
+      try {
+        const { data: sheet, error } = await sb
+          .from('pick_sheets')
+          .select('id, total_points_guess, five_star_game_id, five_star_side')
+          .eq('user_id', userId)
+          .eq('week_id', activeWeekId)
+          .maybeSingle();
+        if (error) throw error;
+        adminOverride.sheetId = sheet?.id || null;
+        adminOverride.tb = sheet?.total_points_guess ?? null;
+        if (sheet?.five_star_game_id && sheet?.five_star_side) {
+          const g = games.find(x => x.id === sheet.five_star_game_id);
+          const team = g ? (sheet.five_star_side === 'away' ? g.away : g.home) : '';
+          adminOverride.star = team ? `${team}|${sheet.five_star_game_id}` : '';
+        }
+        if (sheet?.id) {
+          const { data: pr, error: pErr } = await sb
+            .from('picks')
+            .select('game_id, selection')
+            .eq('pick_sheet_id', sheet.id);
+          if (pErr) throw pErr;
+          (pr || []).forEach(p => { adminOverride.picks[p.game_id] = p.selection; });
+        }
+        document.getElementById('admin-override-tb').value =
+          adminOverride.tb != null ? adminOverride.tb : '';
+        renderAdminOverrideGames();
+      } catch (e) {
+        console.error(e);
+        gamesBox.innerHTML = `<p class="error">Could not load picks: ${escapeHtml(e.message || e)}</p>`;
+      }
+    }
+
+    function renderAdminOverrideGames() {
+      const gamesBox = document.getElementById('admin-override-games');
+      const starSel = document.getElementById('admin-override-star');
+      if (!gamesBox) return;
+      if (!games.length) {
+        gamesBox.innerHTML = '<p class="subtitle">No games on this week’s slate.</p>';
+        return;
+      }
+      gamesBox.innerHTML = games.map(g => {
+        const sel = adminOverride.picks[g.id] || '';
+        return `<div class="override-pick-row" data-gid="${g.id}">
+          <span style="flex:1;min-width:140px;">${g.num || ''}. ${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</span>
+          <select data-override-pick="${g.id}">
+            <option value="">—</option>
+            <option value="away" ${sel === 'away' ? 'selected' : ''}>${escapeHtml(g.away)} ${formatOdds(-g.odds)}</option>
+            <option value="home" ${sel === 'home' ? 'selected' : ''}>${escapeHtml(g.home)} ${formatOdds(g.odds)}</option>
+          </select>
+        </div>`;
+      }).join('');
+      gamesBox.querySelectorAll('[data-override-pick]').forEach(sel => {
+        sel.onchange = () => {
+          const gid = sel.dataset.overridePick;
+          if (sel.value) adminOverride.picks[gid] = sel.value;
+          else delete adminOverride.picks[gid];
+          // rebuild star options
+          fillAdminOverrideStar();
+        };
+      });
+      fillAdminOverrideStar();
+    }
+
+    function fillAdminOverrideStar() {
+      const starSel = document.getElementById('admin-override-star');
+      if (!starSel) return;
+      const prev = adminOverride.star;
+      starSel.innerHTML = '<option value="">— None —</option>';
+      games.forEach(g => {
+        const side = adminOverride.picks[g.id];
+        if (!side) return;
+        const team = side === 'away' ? g.away : g.home;
+        const line = side === 'away' ? formatOdds(-g.odds) : formatOdds(g.odds);
+        const val = `${team}|${g.id}`;
+        const o = document.createElement('option');
+        o.value = val;
+        o.textContent = `${team} ${line}`;
+        if (val === prev) o.selected = true;
+        starSel.appendChild(o);
+      });
+      if (prev && ![...starSel.options].some(o => o.value === prev)) {
+        adminOverride.star = '';
+        starSel.value = '';
+      }
+      starSel.onchange = () => { adminOverride.star = starSel.value; };
+    }
+
+    async function saveAdminOverride() {
+      if (!currentUser?.isAdmin || !activeWeekId || !adminOverride.userId) {
+        alert('Select a player first.');
+        return;
+      }
+      const errEl = document.getElementById('admin-override-err');
+      const okEl = document.getElementById('admin-override-msg');
+      errEl.classList.add('hidden');
+      okEl.classList.add('hidden');
+      const tbRaw = document.getElementById('admin-override-tb').value;
+      const tb = tbRaw === '' ? null : parseInt(tbRaw, 10);
+      let fiveStarGameId = null;
+      let fiveStarSide = null;
+      if (adminOverride.star) {
+        const [team, gameId] = adminOverride.star.split('|');
+        fiveStarGameId = gameId || null;
+        const g = games.find(x => x.id === fiveStarGameId);
+        if (g) fiveStarSide = team === g.away ? 'away' : 'home';
+      }
+      const btn = document.getElementById('admin-override-save');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        const sheetPayload = {
+          user_id: adminOverride.userId,
+          week_id: activeWeekId,
+          total_points_guess: tb,
+          five_star_game_id: fiveStarGameId,
+          five_star_side: fiveStarSide,
+          submitted_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        const { data: upserted, error: upErr } = await sb
+          .from('pick_sheets')
+          .upsert(sheetPayload, { onConflict: 'user_id,week_id' })
+          .select('id')
+          .single();
+        if (upErr) throw upErr;
+        const sheetId = upserted.id;
+        adminOverride.sheetId = sheetId;
+        const pickRows = Object.keys(adminOverride.picks).map(gameId => ({
+          pick_sheet_id: sheetId,
+          game_id: gameId,
+          selection: adminOverride.picks[gameId],
+          is_auto_default: false,
+          updated_at: new Date().toISOString()
+        }));
+        if (pickRows.length) {
+          const { error: pErr } = await sb.from('picks').upsert(pickRows, { onConflict: 'pick_sheet_id,game_id' });
+          if (pErr) throw pErr;
+        }
+        okEl.textContent = 'Player picks saved.';
+        okEl.classList.remove('hidden');
+        setTimeout(() => okEl.classList.add('hidden'), 2500);
+      } catch (e) {
+        console.error(e);
+        errEl.textContent = (e.message || String(e)) +
+          ' — Admins may need UPDATE policies on pick_sheets/picks (see SQL below).';
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save player picks';
+      }
+    }
+
     function renderAdmin() {
       if (!currentUser?.isAdmin) {
         showView('picks');
         return;
       }
+      loadAdminOverrideUsers();
       const list = document.getElementById('admin-games-list');
       if (!list) return;
       list.innerHTML = `
@@ -2975,6 +3250,9 @@
       });
       renderAdmin();
     };
+
+    document.getElementById('admin-override-user').onchange = () => loadAdminOverrideSheet();
+    document.getElementById('admin-override-save').onclick = () => saveAdminOverride();
 
     // ---- Automated scores from ESPN public scoreboard ----
     function normalizeTeamName(name) {
@@ -3420,6 +3698,9 @@
       updatePicksHeader();
       renderAdmin();
       renderWeekTabs();
+      if (document.getElementById('admin-override-user')?.value) {
+        await loadAdminOverrideSheet();
+      }
     };
 
     document.getElementById('admin-save-week-flags').onclick = async () => {
@@ -3434,7 +3715,39 @@
       if (w) w.picks_open = open;
       populateAdminWeekSelect();
       renderWeekTabs();
-      alert(open ? 'Week is open for picks.' : 'Week closed for picks.');
+
+      if (open) {
+        const label = w?.label || 'This week';
+        const noteBody =
+          `${label} is open for picks!\n\n` +
+          `Log in at ${window.location.origin}${window.location.pathname || '/'} and submit your sheet before games lock at kickoff.\n\n` +
+          `— The Commish`;
+        const shareText = noteBody;
+        let msg = `${label} is open for picks.`;
+        if (confirm(`${msg}\n\nPost this as a Commish Note for the group?`)) {
+          try {
+            const { error: nErr } = await sb.from('commish_notes').insert({
+              body: noteBody,
+              images: [],
+              author_id: currentUser.id,
+              updated_at: new Date().toISOString()
+            });
+            if (nErr) throw nErr;
+            msg += '\n\nCommish Note posted.';
+          } catch (e) {
+            msg += '\n\nCould not post note: ' + (e.message || e);
+          }
+        }
+        try {
+          await navigator.clipboard.writeText(shareText);
+          msg += '\n\nAnnouncement text copied to clipboard (paste into group chat).';
+        } catch (_) {
+          msg += '\n\n(Could not copy to clipboard automatically.)';
+        }
+        alert(msg);
+      } else {
+        alert('Week closed for picks.');
+      }
     };
 
     document.getElementById('admin-create-week').onclick = async () => {
