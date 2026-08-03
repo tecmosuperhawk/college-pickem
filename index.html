@@ -1011,22 +1011,93 @@
     }
 
     function renderWeekTabs() {
+      // Standings can show all weeks that exist (for past week standings); picks/group use open/active
       const openWeeks = allWeeks.filter(w => w.picks_open || w.is_active);
-      const containers = ['week-tabs', 'week-tabs-group', 'week-tabs-standings'];
-      containers.forEach(id => {
+      const allForStandings = allWeeks.length ? allWeeks : openWeeks;
+      const containers = [
+        { id: 'week-tabs', weeks: openWeeks, highlight: true },
+        { id: 'week-tabs-group', weeks: openWeeks, highlight: true },
+        {
+          id: 'week-tabs-standings',
+          weeks: allForStandings,
+          // Overall season: no week tab should look selected
+          highlight: standingsMode !== 'overall'
+        }
+      ];
+      containers.forEach(({ id, weeks, highlight }) => {
         const tabs = document.getElementById(id);
         if (!tabs) return;
-        if (!openWeeks.length) {
+        if (!weeks.length) {
           tabs.innerHTML = '<span style="color:var(--muted);font-size:0.85rem;">No weeks available.</span>';
           return;
         }
-        tabs.innerHTML = openWeeks.map(w =>
-          `<button type="button" class="btn btn-sm ${w.id === activeWeekId ? '' : 'btn-outline'}" data-week="${w.id}">${w.label}</button>`
-        ).join('');
+        tabs.innerHTML = weeks.map(w => {
+          const selected = highlight && w.id === activeWeekId;
+          return `<button type="button" class="btn btn-sm ${selected ? '' : 'btn-outline'}" data-week="${w.id}">${w.label}</button>`;
+        }).join('');
         tabs.querySelectorAll('button[data-week]').forEach(btn => {
-          btn.onclick = () => switchWeek(btn.dataset.week);
+          btn.onclick = async () => {
+            if (id === 'week-tabs-standings') {
+              standingsMode = 'week';
+              standingsSort = { key: 'pts', dir: 'desc' };
+            }
+            await switchWeek(btn.dataset.week, { refreshView: id === 'week-tabs-standings' ? 'standings' : undefined });
+            if (id === 'week-tabs-standings') {
+              await renderStandings('week');
+              renderWeekTabs();
+            }
+          };
         });
       });
+    }
+
+    /** Prefer week with the nearest upcoming kickoff among open weeks; else latest available week. */
+    async function selectCurrentStandingsWeek() {
+      const candidates = allWeeks.filter(w => w.picks_open);
+      const fallbackPool = candidates.length ? candidates : allWeeks.filter(w => w.picks_open || w.is_active);
+      const pool = fallbackPool.length ? fallbackPool : allWeeks;
+      if (!pool.length) return activeWeekId;
+
+      const weekIds = pool.map(w => w.id);
+      let gameRows = [];
+      try {
+        const { data, error } = await sb
+          .from('games')
+          .select('week_id, kickoff_at, status')
+          .in('week_id', weekIds);
+        if (error) throw error;
+        gameRows = data || [];
+      } catch (e) {
+        console.warn('selectCurrentStandingsWeek games fetch', e);
+      }
+
+      const now = Date.now();
+      let bestWeekId = null;
+      let bestKick = Infinity;
+      weekIds.forEach(wid => {
+        const kicks = gameRows
+          .filter(g => g.week_id === wid && g.kickoff_at)
+          .map(g => new Date(g.kickoff_at).getTime())
+          .filter(t => !isNaN(t));
+        // nearest future kickoff; if all past, nearest past (least negative distance)
+        const future = kicks.filter(t => t >= now).sort((a, b) => a - b);
+        const past = kicks.filter(t => t < now).sort((a, b) => b - a);
+        const nextKick = future.length ? future[0] : (past.length ? past[0] : null);
+        if (nextKick == null) return;
+        const dist = Math.abs(nextKick - now);
+        // Prefer future over past when comparable
+        const score = (future.length ? 0 : 1e15) + dist;
+        if (score < bestKick) {
+          bestKick = score;
+          bestWeekId = wid;
+        }
+      });
+
+      if (bestWeekId) return bestWeekId;
+
+      // No games timed: last week by week_number
+      const sorted = [...pool].sort((a, b) => (b.week_number || 0) - (a.week_number || 0));
+      return sorted[0].id;
     }
 
     function updatePicksHeader() {
@@ -1042,7 +1113,10 @@
       const gp = document.getElementById('group-picks-title');
       if (gp) gp.textContent = w ? `Group Picks · ${w.label}` : 'Group Picks';
       const st = document.getElementById('standings-title');
-      if (st) st.textContent = w ? `Standings · ${w.label}` : 'Standings';
+      if (st) {
+        if (standingsMode === 'overall') st.textContent = 'Standings · Overall Season';
+        else st.textContent = w ? `Standings · ${w.label}` : 'Standings';
+      }
     }
 
     /** Open / Locked / Live / Final badge for a game card */
@@ -2317,6 +2391,8 @@
       mode = standingsMode;
       document.getElementById('stand-week').className = mode === 'week' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
       document.getElementById('stand-overall').className = mode === 'overall' ? 'btn btn-sm' : 'btn btn-sm btn-outline';
+      updatePicksHeader();
+      renderWeekTabs();
       const body = document.getElementById('standings-body');
       body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);">Loading…</td></tr>';
       const banner = document.getElementById('standings-winner-banner');
@@ -2634,26 +2710,32 @@
       }
     }
 
-    document.getElementById('stand-week').onclick = () => {
-      standingsSort = { key: 'pts', dir: 'desc' }; // default: highest points first
-      renderStandings('week');
+    document.getElementById('stand-week').onclick = async () => {
+      standingsSort = { key: 'pts', dir: 'desc' };
+      standingsMode = 'week';
+      const preferred = await selectCurrentStandingsWeek();
+      if (preferred && preferred !== activeWeekId) {
+        await switchWeek(preferred);
+      }
+      renderWeekTabs();
+      await renderStandings('week');
     };
     document.getElementById('stand-overall').onclick = () => {
-      standingsSort = { key: 'pts', dir: 'desc' }; // default: highest points first
+      standingsSort = { key: 'pts', dir: 'desc' };
+      standingsMode = 'overall';
+      renderWeekTabs(); // clears week-tab highlight
       renderStandings('overall');
     };
     document.querySelectorAll('#standings-head th.sortable').forEach(th => {
       th.onclick = () => {
-        if (standingsMode !== 'overall') {
-          // Switch to overall when sorting by these columns
-          standingsMode = 'overall';
-        }
+        standingsMode = 'overall';
         const key = th.dataset.sort;
         if (standingsSort.key === key) {
           standingsSort.dir = standingsSort.dir === 'desc' ? 'asc' : 'desc';
         } else {
           standingsSort = { key, dir: 'desc' };
         }
+        renderWeekTabs();
         renderStandings('overall');
       };
     });
