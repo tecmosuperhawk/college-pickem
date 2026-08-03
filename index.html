@@ -265,6 +265,21 @@
       font-size: 0.88rem;
     }
     .next-lock-banner strong { color: var(--accent); }
+    .quick-picks-bar { margin: 0 0 0.85rem; }
+    .quick-picks-menu {
+      margin-top: 0.5rem;
+      padding: 0.75rem 0.85rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--card);
+    }
+    .quick-picks-hint {
+      font-size: 0.8rem; color: var(--muted); margin: 0 0 0.65rem; line-height: 1.4;
+    }
+    .quick-picks-actions {
+      display: flex; flex-wrap: wrap; gap: 0.4rem;
+    }
+    .quick-picks-actions .btn { font-size: 0.8rem; }
     .override-pick-row {
       display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
       padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
@@ -497,6 +512,19 @@
       <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
       <div id="week-tabs" class="week-tabs"></div>
       <div id="next-lock-banner" class="next-lock-banner hidden"></div>
+      <div class="quick-picks-bar">
+        <button type="button" class="btn btn-sm btn-outline" id="quick-picks-toggle">Quick Picks ▾</button>
+        <div id="quick-picks-menu" class="quick-picks-menu hidden">
+          <p class="quick-picks-hint">Fill all <strong>open</strong> games (locked games are left alone). You can still change individual picks after.</p>
+          <div class="quick-picks-actions">
+            <button type="button" class="btn btn-sm" data-qp="away">All Away</button>
+            <button type="button" class="btn btn-sm" data-qp="home">All Home</button>
+            <button type="button" class="btn btn-sm" data-qp="favorites">All Favorites</button>
+            <button type="button" class="btn btn-sm" data-qp="underdogs">All Underdogs</button>
+            <button type="button" class="btn btn-sm btn-outline" data-qp="random">Random</button>
+          </div>
+        </div>
+      </div>
       <div id="picks-games"></div>
       <div class="card hidden" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
         <h3 id="tb-title" style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
@@ -1589,6 +1617,18 @@
       return m;
     }
 
+    document.getElementById('quick-picks-toggle').onclick = () => {
+      const menu = document.getElementById('quick-picks-menu');
+      const toggle = document.getElementById('quick-picks-toggle');
+      if (!menu) return;
+      menu.classList.toggle('hidden');
+      const isOpen = !menu.classList.contains('hidden');
+      if (toggle) toggle.textContent = isOpen ? 'Quick Picks ▴' : 'Quick Picks ▾';
+    };
+    document.querySelectorAll('#quick-picks-menu [data-qp]').forEach(btn => {
+      btn.onclick = () => applyQuickPicks(btn.dataset.qp);
+    });
+
     document.getElementById('logout-btn').onclick = async () => {
       if (!confirmLeavePicks('You have unsaved picks. Log out without saving?')) return;
       try {
@@ -1889,12 +1929,62 @@
     };
 
     // Auto-pick away team for any locked game the user never selected
+    /** Locked games with no pick → default to away (gives a fighting chance vs blank). */
     function applyLockedDefaults() {
       games.forEach(g => {
         if (isLocked(g) && !myPicks[g.id]) {
           myPicks[g.id] = 'away';
         }
       });
+    }
+
+    /** Home line < 0 ⇒ home favored; > 0 ⇒ away favored. */
+    function sideForQuickPick(g, mode) {
+      const odds = Number(g.odds);
+      if (mode === 'away') return 'away';
+      if (mode === 'home') return 'home';
+      if (mode === 'favorites') return odds < 0 ? 'home' : 'away';
+      if (mode === 'underdogs') return odds < 0 ? 'away' : 'home';
+      if (mode === 'random') return Math.random() < 0.5 ? 'away' : 'home';
+      return null;
+    }
+
+    function applyQuickPicks(mode) {
+      const open = games.filter(g => !isLocked(g));
+      if (!open.length) {
+        alert('No open games left to fill — everything is locked.');
+        return;
+      }
+      const labels = {
+        away: 'all away teams',
+        home: 'all home teams',
+        favorites: 'all favorites',
+        underdogs: 'all underdogs',
+        random: 'a random side on each open game'
+      };
+      if (!confirm(`Set ${labels[mode] || mode} on ${open.length} open game${open.length === 1 ? '' : 's'}?\n\nLocked games stay as they are. You can still edit picks after.`)) {
+        return;
+      }
+      open.forEach(g => {
+        const side = sideForQuickPick(g, mode);
+        if (side) myPicks[g.id] = side;
+      });
+      // Drop 5★ if it no longer matches the pick for that game
+      if (myStar) {
+        const [team, gid] = myStar.split('|');
+        const g = games.find(x => x.id === gid);
+        if (g) {
+          const side = myPicks[g.id];
+          const pickedTeam = side === 'away' ? g.away : (side === 'home' ? g.home : null);
+          if (pickedTeam !== team) myStar = '';
+        }
+      }
+      markPicksDirty();
+      renderPicksEntry();
+      const menu = document.getElementById('quick-picks-menu');
+      const toggle = document.getElementById('quick-picks-toggle');
+      if (menu) menu.classList.add('hidden');
+      if (toggle) toggle.textContent = 'Quick Picks ▾';
     }
 
     // ---------- RENDER PICKS ENTRY ----------
