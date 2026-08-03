@@ -266,10 +266,7 @@
       #view-standings table { font-size: 0.8rem; }
       #view-standings th, #view-standings td { padding: 0.4rem 0.3rem; }
       #view-standings .col-record { display: none; }
-      th.col-ww .ww-full { display: none; }
-      th.col-ww .ww-short { display: inline; }
     }
-    th.col-ww .ww-short { display: none; }
     th, td { padding: 0.55rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
     tr:hover td { background: rgba(255,255,255,0.03); }
@@ -541,9 +538,7 @@
               <th class="col-record">Record</th>
               <th class="sortable" data-sort="pts">Pts <span class="sort-ind"></span></th>
               <th class="sortable" data-sort="star">5★ <span class="sort-ind"></span></th>
-              <th id="standings-week-wins-th" class="sortable col-ww" data-sort="weekWins" title="Number of weekly wins">
-                <span class="ww-full">Weekly Wins</span><span class="ww-short">WW</span> <span class="sort-ind"></span>
-              </th>
+              <th id="standings-week-wins-th" class="sortable col-ww" data-sort="weekWins" title="Weeks won (tap number for details)">Wins <span class="sort-ind"></span></th>
               <th id="standings-tb-th">TB</th>
             </tr>
           </thead>
