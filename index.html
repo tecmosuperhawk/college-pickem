@@ -85,9 +85,86 @@
     .nav-links button.active, .nav-links button:hover {
       background: var(--accent);
       border-color: var(--accent);
+      color: #fff;
     }
     .nav-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; color: var(--muted); }
     .container { max-width: 960px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+
+    /* Mobile bottom tab bar */
+    .bottom-nav {
+      display: none;
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      z-index: 60;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+      justify-content: space-around;
+      align-items: stretch;
+    }
+    .bottom-nav button {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      padding: 0.35rem 0.2rem;
+      cursor: pointer;
+      font-size: 0.65rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.15rem;
+    }
+    .bottom-nav button.active { color: var(--accent); font-weight: 700; }
+    .bottom-nav .bn-icon { font-size: 1.15rem; line-height: 1; }
+    .bottom-nav .bn-label { line-height: 1.1; }
+    .more-sheet {
+      position: fixed; inset: 0; z-index: 70;
+      display: flex; align-items: flex-end; justify-content: center;
+    }
+    .more-sheet.hidden { display: none; }
+    .more-sheet-backdrop {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.45);
+    }
+    .more-sheet-panel {
+      position: relative;
+      width: 100%; max-width: 480px;
+      background: var(--card);
+      border-radius: 16px 16px 0 0;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      padding: 0.5rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+      z-index: 1;
+    }
+    .more-sheet-handle {
+      width: 40px; height: 4px; border-radius: 2px;
+      background: var(--border); margin: 0.25rem auto 0.75rem;
+    }
+    .more-sheet-item {
+      display: block; width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.85rem 0.5rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .more-sheet-item:last-child { border-bottom: none; }
+    .more-sheet-item.more-danger { color: var(--danger); }
+    .more-sheet-item.more-cancel { text-align: center; color: var(--muted); font-weight: 600; }
+
+    @media (max-width: 720px) {
+      .nav-links { display: none; }
+      .nav-user #logout-btn { display: none; }
+      .bottom-nav { display: flex; }
+      .bottom-nav.hidden { display: none; }
+      .container { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+      .status-bar {
+        bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
+      }
+    }
     .hidden { display: none !important; }
     h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
     .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
@@ -487,6 +564,23 @@
       <button id="logout-btn" class="btn-sm btn-outline">Logout</button>
     </div>
   </nav>
+  <nav class="bottom-nav hidden" id="bottom-nav" aria-label="Main">
+    <button type="button" data-view="picks" class="active"><span class="bn-icon">📝</span><span class="bn-label">Picks</span></button>
+    <button type="button" data-view="others"><span class="bn-icon">👥</span><span class="bn-label">Group</span></button>
+    <button type="button" data-view="standings"><span class="bn-icon">📊</span><span class="bn-label">Standings</span></button>
+    <button type="button" id="bottom-more-btn"><span class="bn-icon">☰</span><span class="bn-label">More</span></button>
+  </nav>
+  <div id="more-sheet" class="more-sheet hidden">
+    <div class="more-sheet-backdrop" id="more-sheet-backdrop"></div>
+    <div class="more-sheet-panel">
+      <div class="more-sheet-handle"></div>
+      <button type="button" data-view="notes" class="more-sheet-item">📝 Commish Notes</button>
+      <button type="button" data-view="admin" id="more-admin-btn" class="more-sheet-item hidden">⚙️ Admin</button>
+      <button type="button" id="more-theme-btn" class="more-sheet-item">🌓 Toggle theme</button>
+      <button type="button" id="more-logout-btn" class="more-sheet-item more-danger">Log out</button>
+      <button type="button" id="more-sheet-close" class="more-sheet-item more-cancel">Cancel</button>
+    </div>
+  </div>
 
   <div class="container">
     <!-- AUTH -->
@@ -1079,6 +1173,14 @@
       document.querySelectorAll('#nav-links button').forEach(b => {
         b.classList.toggle('active', b.dataset.view === name);
       });
+      // Bottom tabs: primary destinations get highlight; Notes/Admin fall under More
+      document.querySelectorAll('#bottom-nav button[data-view]').forEach(b => {
+        b.classList.toggle('active', b.dataset.view === name);
+      });
+      const moreBtn = document.getElementById('bottom-more-btn');
+      if (moreBtn) {
+        moreBtn.classList.toggle('active', name === 'notes' || name === 'admin');
+      }
       // Keep admin panel empty when not allowed
       if (name !== 'admin') {
         const adminView = document.getElementById('view-admin');
@@ -1087,6 +1189,34 @@
           if (list) list.innerHTML = '';
         }
       }
+    }
+
+    function closeMoreSheet() {
+      document.getElementById('more-sheet')?.classList.add('hidden');
+    }
+    function openMoreSheet() {
+      const adminMore = document.getElementById('more-admin-btn');
+      if (adminMore) {
+        if (currentUser?.isAdmin) adminMore.classList.remove('hidden');
+        else adminMore.classList.add('hidden');
+      }
+      document.getElementById('more-sheet')?.classList.remove('hidden');
+    }
+
+    function navigateToView(v) {
+      if (v === 'admin' && !currentUser?.isAdmin) {
+        alert('Admin access only.');
+        v = 'picks';
+      }
+      const leavingPicks = document.getElementById('view-picks')?.classList.contains('active') && v !== 'picks';
+      if (leavingPicks && !confirmLeavePicks()) return;
+      if (v === 'others') renderOthers();
+      if (v === 'standings') renderStandings('week');
+      if (v === 'admin') renderAdmin();
+      if (v === 'picks') renderPicksEntry();
+      if (v === 'notes') renderNotes();
+      showView(v);
+      closeMoreSheet();
     }
 
     // ---------- SUPABASE ----------
@@ -1453,11 +1583,22 @@
       try {
         currentUser = user;
         document.getElementById('main-nav').style.display = user ? 'flex' : 'none';
+        const bottomNav = document.getElementById('bottom-nav');
+        if (bottomNav) {
+          if (user) bottomNav.classList.remove('hidden');
+          else bottomNav.classList.add('hidden');
+        }
+        if (!user) closeMoreSheet();
         document.getElementById('user-display').textContent = user ? (user.name || user.email || '') : '';
         const adminBtn = document.getElementById('nav-admin-btn');
         if (adminBtn) {
           if (user && user.isAdmin) adminBtn.classList.remove('hidden');
           else adminBtn.classList.add('hidden');
+        }
+        const moreAdmin = document.getElementById('more-admin-btn');
+        if (moreAdmin) {
+          if (user && user.isAdmin) moreAdmin.classList.remove('hidden');
+          else moreAdmin.classList.add('hidden');
         }
         if (user) {
           await loadGamesFromSupabase();
@@ -1673,28 +1814,33 @@
       submitted = false;
       clearPicksDirty();
       document.getElementById('main-nav').style.display = 'none';
+      document.getElementById('bottom-nav')?.classList.add('hidden');
+      closeMoreSheet();
       document.getElementById('user-display').textContent = '';
       showView('auth');
     };
 
     // Nav
     document.querySelectorAll('#nav-links button').forEach(btn => {
-      btn.onclick = () => {
-        let v = btn.dataset.view;
-        const leavingPicks = document.getElementById('view-picks')?.classList.contains('active') && v !== 'picks';
-        if (leavingPicks && !confirmLeavePicks()) return;
-        if (v === 'admin' && !currentUser?.isAdmin) {
-          alert('Admin access only.');
-          v = 'picks';
-        }
-        if (v === 'others') renderOthers();
-        if (v === 'standings') renderStandings('week');
-        if (v === 'admin') renderAdmin();
-        if (v === 'picks') renderPicksEntry();
-        if (v === 'notes') renderNotes();
-        showView(v);
-      };
+      btn.onclick = () => navigateToView(btn.dataset.view);
     });
+    document.querySelectorAll('#bottom-nav button[data-view]').forEach(btn => {
+      btn.onclick = () => navigateToView(btn.dataset.view);
+    });
+    document.getElementById('bottom-more-btn').onclick = () => openMoreSheet();
+    document.getElementById('more-sheet-backdrop').onclick = () => closeMoreSheet();
+    document.getElementById('more-sheet-close').onclick = () => closeMoreSheet();
+    document.querySelectorAll('#more-sheet [data-view]').forEach(btn => {
+      btn.onclick = () => navigateToView(btn.dataset.view);
+    });
+    document.getElementById('more-theme-btn').onclick = () => {
+      document.getElementById('theme-toggle')?.click();
+      closeMoreSheet();
+    };
+    document.getElementById('more-logout-btn').onclick = () => {
+      closeMoreSheet();
+      document.getElementById('logout-btn')?.click();
+    };
 
     window.addEventListener('beforeunload', (e) => {
       if (!picksDirty) return;
@@ -1981,16 +2127,6 @@
       const open = games.filter(g => !isLocked(g));
       if (!open.length) {
         alert('No open games left to fill — everything is locked.');
-        return;
-      }
-      const labels = {
-        away: 'all away teams',
-        home: 'all home teams',
-        favorites: 'all favorites',
-        underdogs: 'all underdogs',
-        random: 'a random side on each open game'
-      };
-      if (!confirm(`Set ${labels[mode] || mode} on ${open.length} open game${open.length === 1 ? '' : 's'}?\n\nLocked games stay as they are. You can still edit picks after.`)) {
         return;
       }
       open.forEach(g => {
