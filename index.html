@@ -239,10 +239,22 @@
     .star-card h3 span { color: var(--star); }
 
     .status-bar {
-      position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 30%);
-      padding: 1.5rem 0 1rem; text-align: center;
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 0.75rem 0 calc(0.85rem + env(safe-area-inset-bottom, 0px));
+      text-align: center;
+      margin-top: 0.5rem;
     }
     .status-text { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.65rem; }
+    #view-picks {
+      padding-bottom: 0.25rem;
+    }
+    #picks-games {
+      padding-bottom: 0.5rem;
+    }
 
     /* Tables */
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1123,22 +1135,51 @@
     function gameStatusBadge(g) {
       const score = LIVE_SCORES[g.id];
       const locked = isLocked(g);
-      const st = (g.status || '').toLowerCase();
-      const scoreBit = (score && score.away != null && score.home != null)
-        ? ` ${score.away}–${score.home}`
-        : (g.away_score != null && g.home_score != null ? ` ${g.away_score}–${g.home_score}` : '');
+      const st = String(g.status || score?.status || '').toLowerCase();
+      const isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
+      const isLive = !isFinal && (
+        st === 'live' || st === 'in_progress' || st === 'in progress' ||
+        String(score?.status || '').toUpperCase() === 'LIVE' ||
+        /in_progress|halftime|end of/i.test(String(score?.status || ''))
+      );
 
-      if (st === 'final' || (score && String(score.status || '').toUpperCase() === 'FINAL')) {
+      const hasRealScore = (score && score.away != null && score.home != null) ||
+        (g.away_score != null && g.home_score != null);
+      // Don't show 0-0 (or any score) until the game is live or final
+      const scoreBit = (isFinal || isLive) && hasRealScore
+        ? ` ${score?.away ?? g.away_score}–${score?.home ?? g.home_score}`
+        : '';
+
+      if (isFinal) {
         return `<span class="status-badge final">Final${scoreBit}</span>`;
       }
-      if (st === 'live' || (score && score.status && String(score.status).toUpperCase() !== 'FINAL')) {
-        const detail = score?.status && score.status !== 'LIVE' ? score.status : 'Live';
+      if (isLive) {
+        const detail = (score?.status && !/^live$/i.test(score.status) && !/^scheduled$/i.test(score.status))
+          ? score.status
+          : 'Live';
         return `<span class="status-badge live">${detail}${scoreBit}</span>`;
       }
       if (locked) {
         return `<span class="status-badge locked">Locked</span>`;
       }
       return `<span class="status-badge open">Open</span>`;
+    }
+
+    function displayScoreForTeam(g, side) {
+      const score = LIVE_SCORES[g.id];
+      const st = String(g.status || score?.status || '').toLowerCase();
+      const isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
+      const isLive = !isFinal && (
+        st === 'live' || st === 'in_progress' ||
+        String(score?.status || '').toUpperCase() === 'LIVE' ||
+        /in_progress|halftime/i.test(String(score?.status || ''))
+      );
+      if (!isFinal && !isLive) return '';
+      const val = score
+        ? (side === 'away' ? score.away : score.home)
+        : (side === 'away' ? g.away_score : g.home_score);
+      if (val == null) return '';
+      return `<span class="team-score">${val}</span>`;
     }
 
     function populateAdminWeekSelect() {
@@ -1193,11 +1234,13 @@
       games = (rows || []).map(mapGameRow);
       Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
       games.forEach(g => {
-        if (g.away_score != null && g.home_score != null) {
+        const st = String(g.status || '').toLowerCase();
+        // Only mirror scores into LIVE_SCORES when the game is actually live or final
+        if ((st === 'final' || st === 'live') && g.away_score != null && g.home_score != null) {
           LIVE_SCORES[g.id] = {
             away: g.away_score,
             home: g.home_score,
-            status: g.status === 'final' ? 'FINAL' : (g.status === 'live' ? 'LIVE' : g.status)
+            status: st === 'final' ? 'FINAL' : 'LIVE'
           };
         }
       });
@@ -1744,7 +1787,6 @@
         const card = document.createElement('div');
         card.className = 'game-card' + (g.isTiebreaker ? ' tiebreaker-game' : '') + (locked ? ' locked' : '');
         card.dataset.id = g.id;
-        const score = LIVE_SCORES[g.id];
         card.innerHTML = `
           <div class="game-header">
             <span>Game ${g.num || ''} · ${formatGameTime(g)}</span>
@@ -1757,14 +1799,14 @@
             <div class="team away ${sel==='away'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
               <span class="marker">•</span>
               <span class="team-name">${g.away}</span>
-              ${score ? `<span class="team-score">${score.away}</span>` : ''}
+              ${displayScoreForTeam(g, 'away')}
               <span class="team-line">${formatOdds(-g.odds)}</span>
             </div>
             <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
             <div class="team home ${sel==='home'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
               <span class="marker">•</span>
               <span class="team-name">${g.home}</span>
-              ${score ? `<span class="team-score">${score.home}</span>` : ''}
+              ${displayScoreForTeam(g, 'home')}
               <span class="team-line">${formatOdds(g.odds)}</span>
             </div>
           </div>
@@ -1983,7 +2025,6 @@
         const locked = isLocked(g);
         const sel = myPicks[g.id];
         const team = sel === 'away' ? g.away : (sel === 'home' ? g.home : '—');
-        const score = LIVE_SCORES[g.id];
         html += `
           <div class="game-card ${g.isTiebreaker ? 'tiebreaker-game' : ''} ${locked ? 'locked' : ''}" data-id="${g.id}">
             <div class="game-header">
@@ -1994,14 +2035,14 @@
               <div class="team away ${sel==='away'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
                 <span class="marker">•</span>
                 <span class="team-name">${g.away}</span>
-                ${score ? `<span class="team-score">${score.away}</span>` : ''}
+                ${displayScoreForTeam(g, 'away')}
                 <span class="team-line">${formatOdds(-g.odds)}</span>
               </div>
               <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
               <div class="team home ${sel==='home'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
                 <span class="marker">•</span>
                 <span class="team-name">${g.home}</span>
-                ${score ? `<span class="team-score">${score.home}</span>` : ''}
+                ${displayScoreForTeam(g, 'home')}
                 <span class="team-line">${formatOdds(g.odds)}</span>
               </div>
             </div>
@@ -3114,12 +3155,14 @@
           g.away_score = awayScore;
           g.home_score = homeScore;
           g.status = newStatus;
-          if (awayScore != null && homeScore != null) {
+          if ((newStatus === 'final' || newStatus === 'live') && awayScore != null && homeScore != null) {
             LIVE_SCORES[g.id] = {
               away: awayScore,
               home: homeScore,
               status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE')
             };
+          } else {
+            delete LIVE_SCORES[g.id];
           }
           updated++;
         }
