@@ -270,6 +270,20 @@
       padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
     }
     .override-pick-row select { max-width: 140px; }
+    .week-open-toast {
+      position: fixed; top: 4.5rem; left: 50%; transform: translateX(-50%);
+      z-index: 200; max-width: min(420px, calc(100% - 1.5rem));
+      padding: 0.85rem 1.1rem; border-radius: 10px;
+      background: var(--card); border: 1px solid var(--accent);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+      font-size: 0.95rem; text-align: center;
+      animation: toastIn 0.25s ease;
+    }
+    .week-open-toast strong { color: var(--accent); }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
 
     /* Tables */
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -1251,11 +1265,19 @@
     }
 
     async function loadWeeksFromSupabase() {
-      const { data, error } = await sb
+      let data, error;
+      ({ data, error } = await sb
         .from('weeks')
-        .select('id, label, week_number, season_year, is_active, picks_open')
+        .select('id, label, week_number, season_year, is_active, picks_open, picks_open_at')
         .order('season_year', { ascending: false })
-        .order('week_number', { ascending: true });
+        .order('week_number', { ascending: true }));
+      if (error && String(error.message || '').includes('picks_open_at')) {
+        ({ data, error } = await sb
+          .from('weeks')
+          .select('id, label, week_number, season_year, is_active, picks_open')
+          .order('season_year', { ascending: false })
+          .order('week_number', { ascending: true }));
+      }
       if (error) {
         // picks_open column may not exist yet — fall back
         if (String(error.message || '').includes('picks_open')) {
@@ -1264,15 +1286,56 @@
             .select('id, label, week_number, season_year, is_active')
             .order('week_number');
           if (e2) throw e2;
-          allWeeks = (d2 || []).map(w => ({ ...w, picks_open: !!w.is_active }));
+          allWeeks = (d2 || []).map(w => ({ ...w, picks_open: !!w.is_active, picks_open_at: null }));
           return;
         }
         throw error;
       }
       allWeeks = (data || []).map(w => ({
         ...w,
-        picks_open: w.picks_open == null ? !!w.is_active : !!w.picks_open
+        picks_open: w.picks_open == null ? !!w.is_active : !!w.picks_open,
+        picks_open_at: w.picks_open_at || null
       }));
+    }
+
+    function weekOpenSeenKey(weekId, openedAt) {
+      return `pickem-seen-open:${weekId}:${openedAt || ''}`;
+    }
+
+    function showWeekOpenToasts() {
+      if (!currentUser) return;
+      const now = Date.now();
+      const DAY = 24 * 60 * 60 * 1000;
+      const toShow = allWeeks.filter(w => {
+        if (!w.picks_open || !w.picks_open_at) return false;
+        const opened = new Date(w.picks_open_at).getTime();
+        if (isNaN(opened) || now - opened > DAY || now < opened) return false;
+        try {
+          if (localStorage.getItem(weekOpenSeenKey(w.id, w.picks_open_at))) return false;
+        } catch (_) {}
+        return true;
+      });
+      if (!toShow.length) return;
+
+      toShow.sort((a, b) => (b.week_number || 0) - (a.week_number || 0));
+      const w = toShow[0];
+      try {
+        localStorage.setItem(weekOpenSeenKey(w.id, w.picks_open_at), '1');
+      } catch (_) {}
+
+      const existing = document.getElementById('week-open-toast');
+      if (existing) existing.remove();
+      const toast = document.createElement('div');
+      toast.id = 'week-open-toast';
+      toast.className = 'week-open-toast';
+      toast.setAttribute('role', 'status');
+      toast.innerHTML = `<strong>${escapeHtml(w.label || 'This week')}</strong> is now ready for picks`;
+      document.body.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.35s ease';
+        setTimeout(() => toast.remove(), 400);
+      }, 4500);
     }
 
     async function loadGamesForWeek(weekId) {
@@ -1346,6 +1409,7 @@
           showView('picks');
           renderAll();
           startScorePolling();
+          showWeekOpenToasts();
         } else {
           stopScorePolling();
           games = [];
@@ -3706,13 +3770,23 @@
     document.getElementById('admin-save-week-flags').onclick = async () => {
       if (!currentUser?.isAdmin || !activeWeekId) return;
       const open = document.getElementById('admin-picks-open').checked;
-      const { error } = await sb.from('weeks').update({ picks_open: open }).eq('id', activeWeekId);
+      const wasOpen = !!(allWeeks.find(x => x.id === activeWeekId)?.picks_open);
+      const patch = { picks_open: open };
+      // Stamp open time when turning open ON (starts the 24h toast window)
+      if (open && !wasOpen) {
+        patch.picks_open_at = new Date().toISOString();
+      }
+      const { error } = await sb.from('weeks').update(patch).eq('id', activeWeekId);
       if (error) {
-        alert('Could not update week flags: ' + error.message + '\n\nRun the picks_open SQL migration first.');
+        alert('Could not update week flags: ' + error.message +
+          '\n\nIf this mentions picks_open_at, run the SQL to add that column.');
         return;
       }
       const w = allWeeks.find(x => x.id === activeWeekId);
-      if (w) w.picks_open = open;
+      if (w) {
+        w.picks_open = open;
+        if (patch.picks_open_at) w.picks_open_at = patch.picks_open_at;
+      }
       populateAdminWeekSelect();
       renderWeekTabs();
 
