@@ -653,7 +653,7 @@
           Tiebreaker
         </h3>
         <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-          <label style="margin:0;font-size:0.85rem;color:var(--muted);">Predicted Total Points</label>
+          <label style="margin:0;font-size:0.85rem;color:var(--muted);" id="bottom-tb-matchup-label">Predicted Total Points</label>
           <input type="number" id="total-points-bottom" min="0" max="150" step="1" placeholder="e.g. 52"
                  style="width:110px;text-align:center;font-weight:700;font-size:1.1rem;">
           <span class="total-line">Line: <strong id="bottom-total-line">O/U —</strong></span>
@@ -2198,10 +2198,10 @@
           ${g.notes ? `<div class="notes">${g.notes}</div>` : ''}
           ${g.isTiebreaker ? `
             <div class="total-input-wrap">
-              <label>Predicted Total Points (NC State + Virginia)</label>
+              <label>Predicted Total Points (${g.away} + ${g.home})</label>
               <input type="number" id="total-points" min="0" max="150" step="1" placeholder="e.g. 52"
                      value="${myTotal !== null ? myTotal : ''}" ${locked ? 'disabled' : ''}>
-              <span class="total-line">Line: <strong>O/U ${g.totalLine}</strong></span>
+              <span class="total-line">Line: <strong>O/U ${g.totalLine != null ? g.totalLine : '—'}</strong></span>
             </div>` : ''}
         `;
         container.appendChild(card);
@@ -2246,6 +2246,10 @@
           tbCard.classList.remove('hidden');
           const tbTitle = document.getElementById('tb-title');
           if (tbTitle) tbTitle.textContent = `Tiebreaker · ${tbGame.away} @ ${tbGame.home} Total`;
+          const matchupLabel = document.getElementById('bottom-tb-matchup-label');
+          if (matchupLabel) {
+            matchupLabel.textContent = `Predicted Total (${tbGame.away} + ${tbGame.home})`;
+          }
         } else {
           tbCard.classList.add('hidden');
         }
@@ -3537,10 +3541,21 @@
             games[i].odds = val;
           } else if (k === 'isTiebreaker') {
             games.forEach((g, j) => {
-              if (j !== i) g.isTiebreaker = false;
+              if (j !== i) {
+                g.isTiebreaker = false;
+                // Keep totalLine only on the TB game in memory
+              }
             });
             games[i].isTiebreaker = el.checked;
             renderAdmin();
+            // TB flag only sticks after Save Slate
+            const msg = document.getElementById('admin-save-msg');
+            if (msg) {
+              msg.textContent = el.checked
+                ? `TB set to ${games[i].away || 'Away'} @ ${games[i].home || 'Home'} — click Save Slate to apply.`
+                : 'TB cleared on this game — click Save Slate to apply.';
+              msg.classList.remove('hidden');
+            }
           } else if (k === 'totalLine') {
             const val = el.value === '' ? null : parseFloat(el.value);
             if (val != null && !isHalfPoint(val)) {
