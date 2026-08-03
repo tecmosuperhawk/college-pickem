@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>College Pick'em 2026</title>
+  <meta name="description" content="College football pick'em against the spread — weekly and season standings.">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pick'em">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-size='36'%3E%F0%9F%8F%88%3C/text%3E%3C/svg%3E">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-size='36'%3E%F0%9F%8F%88%3C/text%3E%3C/svg%3E">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root, html[data-theme="dark"] {
@@ -280,6 +288,26 @@
       display: flex; flex-wrap: wrap; gap: 0.4rem;
     }
     .quick-picks-actions .btn { font-size: 0.8rem; }
+    .empty-state {
+      text-align: center;
+      padding: 1.75rem 1.25rem;
+    }
+    .empty-state-icon {
+      font-size: 1.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .empty-state strong {
+      display: block;
+      font-size: 1.05rem;
+      margin-bottom: 0.35rem;
+    }
+    .empty-state p {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin: 0 auto;
+      max-width: 28rem;
+    }
     .override-pick-row {
       display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
       padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
@@ -511,20 +539,20 @@
       <h1 id="picks-week-title">Picks</h1>
       <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
       <div id="week-tabs" class="week-tabs"></div>
-      <div id="next-lock-banner" class="next-lock-banner hidden"></div>
       <div class="quick-picks-bar">
         <button type="button" class="btn btn-sm btn-outline" id="quick-picks-toggle">Quick Picks ▾</button>
         <div id="quick-picks-menu" class="quick-picks-menu hidden">
           <p class="quick-picks-hint">Fill all <strong>open</strong> games (locked games are left alone). You can still change individual picks after.</p>
           <div class="quick-picks-actions">
-            <button type="button" class="btn btn-sm" data-qp="away">All Away</button>
-            <button type="button" class="btn btn-sm" data-qp="home">All Home</button>
-            <button type="button" class="btn btn-sm" data-qp="favorites">All Favorites</button>
-            <button type="button" class="btn btn-sm" data-qp="underdogs">All Underdogs</button>
+            <button type="button" class="btn btn-sm btn-outline" data-qp="away">All Away</button>
+            <button type="button" class="btn btn-sm btn-outline" data-qp="home">All Home</button>
+            <button type="button" class="btn btn-sm btn-outline" data-qp="favorites">All Favorites</button>
+            <button type="button" class="btn btn-sm btn-outline" data-qp="underdogs">All Underdogs</button>
             <button type="button" class="btn btn-sm btn-outline" data-qp="random">Random</button>
           </div>
         </div>
       </div>
+      <div id="next-lock-banner" class="next-lock-banner hidden"></div>
       <div id="picks-games"></div>
       <div class="card hidden" id="bottom-tiebreaker" style="margin-top:1.25rem;border-color:var(--tiebreaker);">
         <h3 id="tb-title" style="font-size:0.85rem;color:var(--tiebreaker);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.04em;">
@@ -2340,12 +2368,22 @@
       box.innerHTML = '<p class="subtitle">Loading players…</p>';
 
       if (!activeWeekId) {
-        box.innerHTML = '<p class="subtitle">No active week.</p>';
+        box.innerHTML = `
+          <div class="card empty-state">
+            <div class="empty-state-icon">📅</div>
+            <strong>No week selected</strong>
+            <p>Open a week from the tabs above once the slate is available.</p>
+          </div>`;
         return;
       }
       if (!games.length) {
         const w = currentWeekMeta();
-        box.innerHTML = `<p class="subtitle">${w ? w.label : 'This week'} has no games posted yet.</p>`;
+        box.innerHTML = `
+          <div class="card empty-state">
+            <div class="empty-state-icon">🏈</div>
+            <strong>No games posted</strong>
+            <p>${escapeHtml(w ? w.label : 'This week')} doesn’t have a slate yet. Check back after the Commish publishes the games.</p>
+          </div>`;
         return;
       }
 
@@ -2393,7 +2431,13 @@
         othersCache = { players, picksBySheet };
 
         if (!players.length) {
-          box.innerHTML = '<p class="subtitle">No one has submitted picks yet this week.</p>';
+          const label = w ? w.label : 'This week';
+          box.innerHTML = `
+            <div class="card empty-state">
+              <div class="empty-state-icon">📋</div>
+              <strong>No picks in yet</strong>
+              <p>Nobody has submitted a sheet for ${escapeHtml(label)} yet. Check back after the group saves their picks — locked games will show as they start.</p>
+            </div>`;
           return;
         }
 
@@ -2696,14 +2740,30 @@
           .select('id, display_name');
         if (pErr) throw pErr;
 
+        if (!(profiles || []).length) {
+          body.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--muted);">
+            <strong style="display:block;color:var(--text);margin-bottom:0.35rem;">No players yet</strong>
+            Standings will show once people create accounts and submit picks.
+          </td></tr>`;
+          return;
+        }
+
         if (mode === 'week') {
           if (!activeWeekId) {
-            body.innerHTML = '<tr><td colspan="6">No active week.</td></tr>';
+            body.innerHTML = '';
+            const wrap = document.querySelector('#view-standings .table-wrap');
+            if (wrap) {
+              // leave table empty; show message via banner area
+            }
+            body.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--muted);">No week selected. Choose a week tab above.</td></tr>`;
             return;
           }
           if (!games.length) {
             const w = currentWeekMeta();
-            body.innerHTML = `<tr><td colspan="6" style="color:var(--muted);">${w ? w.label : 'This week'} has no games posted yet.</td></tr>`;
+            body.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:1.5rem;color:var(--muted);">
+              <strong style="display:block;color:var(--text);margin-bottom:0.35rem;">No games posted</strong>
+              ${w ? w.label : 'This week'} doesn’t have a slate yet.
+            </td></tr>`;
             if (banner) { banner.className = 'hidden'; banner.innerHTML = ''; }
             return;
           }
