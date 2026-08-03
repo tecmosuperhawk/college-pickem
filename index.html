@@ -245,7 +245,31 @@
     .status-text { color: var(--muted); font-size: 0.88rem; margin-bottom: 0.65rem; }
 
     /* Tables */
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .week-wins-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 1.6rem; padding: 0.2rem 0.45rem;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: inherit; font: inherit; cursor: pointer;
+    }
+    .week-wins-btn.has-wins {
+      border-color: rgba(234,179,8,0.45); color: var(--star); font-weight: 700;
+    }
+    .week-wins-detail {
+      display: none; margin-top: 0.25rem; font-size: 0.72rem; color: var(--muted);
+      line-height: 1.3; white-space: normal; max-width: 9rem;
+    }
+    .week-wins-detail.open { display: block; }
+    th.col-ww, td.col-ww { white-space: nowrap; text-align: center; }
+    @media (max-width: 600px) {
+      #view-standings table { font-size: 0.8rem; }
+      #view-standings th, #view-standings td { padding: 0.4rem 0.3rem; }
+      #view-standings .col-record { display: none; }
+      th.col-ww .ww-full { display: none; }
+      th.col-ww .ww-short { display: inline; }
+    }
+    th.col-ww .ww-short { display: none; }
     th, td { padding: 0.55rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
     tr:hover td { background: rgba(255,255,255,0.03); }
@@ -508,16 +532,18 @@
         <button class="btn btn-sm btn-outline" id="stand-overall">Overall Season</button>
       </div>
       <div id="standings-winner-banner" class="hidden"></div>
-      <div class="card">
+      <div class="card table-wrap">
         <table>
           <thead>
             <tr id="standings-head">
               <th>#</th>
               <th>Player</th>
-              <th>Record</th>
-              <th class="sortable" data-sort="pts">Points <span class="sort-ind"></span></th>
+              <th class="col-record">Record</th>
+              <th class="sortable" data-sort="pts">Pts <span class="sort-ind"></span></th>
               <th class="sortable" data-sort="star">5★ <span class="sort-ind"></span></th>
-              <th id="standings-week-wins-th" class="sortable" data-sort="weekWins" title="Number of weekly wins">Weekly Wins <span class="sort-ind"></span></th>
+              <th id="standings-week-wins-th" class="sortable col-ww" data-sort="weekWins" title="Number of weekly wins">
+                <span class="ww-full">Weekly Wins</span><span class="ww-short">WW</span> <span class="sort-ind"></span>
+              </th>
               <th id="standings-tb-th">TB</th>
             </tr>
           </thead>
@@ -2192,20 +2218,35 @@
         let weekWinsCell = '';
         if (showWeekWins) {
           const count = typeof r.weekWins === 'number' ? r.weekWins : 0;
-          const labels = (r.weekWinLabels || []).join(', ');
-          const title = labels ? ` title="${labels.replace(/"/g, '&quot;')}"` : ' title="No weekly wins yet"';
-          weekWinsCell = `<td${title} style="cursor:default;"><span style="font-weight:${count ? 700 : 400};color:${count ? 'var(--star)' : 'var(--muted)'};">${count}</span></td>`;
+          const labels = (r.weekWinLabels || []).join(', ') || 'No weekly wins yet';
+          const safeLabels = labels.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+          const btnClass = count ? 'week-wins-btn has-wins' : 'week-wins-btn';
+          weekWinsCell = `<td class="col-ww">
+            <button type="button" class="${btnClass}" data-ww-toggle title="${safeLabels}" aria-label="Weekly wins: ${safeLabels}">${count}</button>
+            <div class="week-wins-detail" data-ww-detail>${safeLabels}</div>
+          </td>`;
         }
         return `<tr class="${classes}">
           <td class="${isWinner || (i === 0 && r.submitted) ? 'rank-1' : ''}">${rankLabel}</td>
           <td>${r.name}${nameExtra}</td>
-          <td>${r.record}</td>
+          <td class="col-record">${r.record}</td>
           <td>${r.pts}</td>
           <td>${starCell}</td>
           ${weekWinsCell}
           ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal)}</td>` : ''}
         </tr>`;
       }).join('');
+
+      // Tap / click to show week labels (mobile has no hover)
+      body.querySelectorAll('[data-ww-toggle]').forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const detail = btn.parentElement.querySelector('[data-ww-detail]');
+          const wasOpen = detail.classList.contains('open');
+          body.querySelectorAll('[data-ww-detail].open').forEach(d => d.classList.remove('open'));
+          if (!wasOpen) detail.classList.add('open');
+        };
+      });
     }
 
     function assignRanks(rows, cmp) {
