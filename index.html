@@ -460,6 +460,16 @@
     .admin-game-row input, .admin-game-row select {
       padding: 0.35rem 0.45rem; font-size: 0.85rem; min-width: 0; width: 100%;
     }
+    .admin-game-row input[type="checkbox"] {
+      width: 1.1rem; height: 1.1rem; min-width: 1.1rem; padding: 0;
+      accent-color: var(--accent); cursor: pointer;
+    }
+    .admin-tb-check {
+      display: flex; align-items: center; justify-content: center; gap: 0.25rem;
+      margin: 0; cursor: pointer; font-size: 0.75rem; color: var(--muted);
+      white-space: nowrap;
+    }
+    .admin-tb-check-label { display: none; }
     .admin-field-label {
       display: none; font-size: 0.7rem; color: var(--muted); margin-bottom: 0.15rem;
     }
@@ -509,6 +519,13 @@
         align-items: flex-end;
       }
       .admin-tb-row .admin-field { flex: 1; min-width: 100px; }
+      .admin-tb-check-label { display: inline; }
+      .admin-tb-check {
+        justify-content: flex-start;
+        padding-bottom: 0.35rem;
+        font-size: 0.85rem;
+        color: var(--text);
+      }
     }
 
     @media (max-width: 800px) {
@@ -3508,8 +3525,9 @@
             </div>
           </div>
           <div class="admin-tb-row">
-            <label class="admin-field" style="display:flex;align-items:center;gap:0.35rem;font-size:0.8rem;margin:0;padding-bottom:0.35rem;">
-              <input type="checkbox" data-k="isTiebreaker" data-i="${idx}" ${g.isTiebreaker ? 'checked' : ''}> Tiebreaker
+            <label class="admin-tb-check" title="Mark as tiebreaker game">
+              <input type="checkbox" data-k="isTiebreaker" data-i="${idx}" ${g.isTiebreaker ? 'checked' : ''}>
+              <span class="admin-tb-check-label">TB</span>
             </label>
             <div class="admin-field">
               <div class="admin-field-label">O/U total</div>
