@@ -650,6 +650,13 @@
       <h1 id="picks-week-title">Picks</h1>
       <p class="subtitle" id="picks-week-subtitle">Against the spread · Times in CT</p>
       <div id="week-tabs" class="week-tabs"></div>
+      <!-- TEMP NFL TEST: remove this block when done testing -->
+      <div id="nfl-test-controls" class="nfl-test-controls" style="display:none;margin:0 0 0.75rem;">
+        <button type="button" class="btn btn-sm" id="nfl-test-btn" style="background:#013369;border-color:#013369;">NFL</button>
+        <button type="button" class="btn btn-sm btn-outline hidden" id="nfl-test-exit">Exit NFL Test</button>
+        <span id="nfl-test-banner" class="hidden" style="font-size:0.8rem;color:var(--muted);margin-left:0.5rem;">NFL test mode — picks stay local; scores from ESPN NFL</span>
+      </div>
+      <!-- /TEMP NFL TEST -->
       <div class="quick-picks-bar">
         <button type="button" class="btn btn-sm btn-outline" id="quick-picks-toggle">Quick Picks ▾</button>
         <div id="quick-picks-menu" class="quick-picks-menu hidden">
@@ -819,6 +826,39 @@
 
   <script>
     // ---------- DATA ----------
+    // =====================================================================
+    // TEMP NFL TEST MODE — flip to false OR delete this whole TEMP section
+    // (NFL_TEST_GAMES, enterNflTestMode/exit, button handlers) to undo.
+    // =====================================================================
+    const TEMP_ENABLE_NFL_TEST = true;
+    let nflTestMode = false;
+    let nflTestSavedCollege = null; // restore college games on exit
+
+    // odds = home line (half-points only). HOF: CAR -1.5 away → home ARI +1.5
+    // Other lines are test half-points where books not published yet.
+    const NFL_TEST_GAMES = [
+      { id: 'nfl-hof', num: 1, time: '7:00 PM', tv: 'NBC', away: 'Carolina Panthers', home: 'Arizona Cardinals', odds: 1.5, date: '2026-08-06', kickoff: '2026-08-07T00:00:00Z', notes: 'Hall of Fame Game · Canton, OH', isTiebreaker: true, totalLine: 36.5, status: 'scheduled' },
+      { id: 'nfl-w1-01', num: 2, time: '6:00 PM', tv: 'NFL+', away: 'Detroit Lions', home: 'Cincinnati Bengals', odds: -2.5, date: '2026-08-13', kickoff: '2026-08-13T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-02', num: 3, time: '6:00 PM', tv: 'NFL Network', away: 'Green Bay Packers', home: 'Pittsburgh Steelers', odds: -1.5, date: '2026-08-13', kickoff: '2026-08-13T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-03', num: 4, time: '6:30 PM', tv: 'NFL+', away: 'Indianapolis Colts', home: 'New England Patriots', odds: 1.5, date: '2026-08-13', kickoff: '2026-08-13T23:30:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-04', num: 5, time: '7:00 PM', tv: 'ESPN App', away: 'Arizona Cardinals', home: 'Las Vegas Raiders', odds: -2.5, date: '2026-08-13', kickoff: '2026-08-14T00:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-05', num: 6, time: '7:00 PM', tv: 'Local', away: 'Los Angeles Chargers', home: 'Houston Texans', odds: 1.5, date: '2026-08-13', kickoff: '2026-08-14T00:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-06', num: 7, time: '8:00 PM', tv: 'NFL Network', away: 'Tennessee Titans', home: 'San Francisco 49ers', odds: -3.5, date: '2026-08-13', kickoff: '2026-08-14T01:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-07', num: 8, time: '6:00 PM', tv: 'ESPN App', away: 'Denver Broncos', home: 'Atlanta Falcons', odds: 1.5, date: '2026-08-14', kickoff: '2026-08-14T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-08', num: 9, time: '6:00 PM', tv: 'NFL Network', away: 'Tampa Bay Buccaneers', home: 'New York Jets', odds: -1.5, date: '2026-08-14', kickoff: '2026-08-14T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-09', num: 10, time: '6:00 PM', tv: 'Local', away: 'Miami Dolphins', home: 'Washington Commanders', odds: 2.5, date: '2026-08-14', kickoff: '2026-08-14T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-10', num: 11, time: '12:00 PM', tv: 'NFL+', away: 'Carolina Panthers', home: 'Buffalo Bills', odds: -3.5, date: '2026-08-15', kickoff: '2026-08-15T17:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-11', num: 12, time: '12:00 PM', tv: 'NFL Network', away: 'Cleveland Browns', home: 'Chicago Bears', odds: -1.5, date: '2026-08-15', kickoff: '2026-08-15T17:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-12', num: 13, time: '12:00 PM', tv: 'ESPN App', away: 'Minnesota Vikings', home: 'New York Giants', odds: 1.5, date: '2026-08-15', kickoff: '2026-08-15T17:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-13', num: 14, time: '3:00 PM', tv: 'NFL+', away: 'Los Angeles Rams', home: 'Kansas City Chiefs', odds: -2.5, date: '2026-08-15', kickoff: '2026-08-15T20:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-14', num: 15, time: '3:00 PM', tv: 'Local', away: 'Jacksonville Jaguars', home: 'New Orleans Saints', odds: -1.5, date: '2026-08-15', kickoff: '2026-08-15T20:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-15', num: 16, time: '6:00 PM', tv: 'NFL Network', away: 'Philadelphia Eagles', home: 'Baltimore Ravens', odds: -1.5, date: '2026-08-15', kickoff: '2026-08-15T23:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' },
+      { id: 'nfl-w1-16', num: 17, time: '7:00 PM', tv: 'Local', away: 'Dallas Cowboys', home: 'Seattle Seahawks', odds: -2.5, date: '2026-08-15', kickoff: '2026-08-16T00:00:00Z', notes: '', isTiebreaker: false, totalLine: null, status: 'scheduled' }
+    ];
+    // =====================================================================
+    // END TEMP NFL TEST DATA (helpers/handlers further below also marked TEMP)
+    // =====================================================================
+
     // Kickoff times are approximate UTC for demo lock logic. Adjust as needed.
     const DEFAULT_GAMES = [
       { id: 1,  time: "11:00 AM", tv: "ESPN",               away: "North Carolina",    home: "TCU",                odds: -6.5,  date: "2026-08-29", kickoff: "2026-08-29T16:00:00Z", notes: "Dublin, Ireland – Aer Lingus Classic", isTiebreaker: false, totalLine: null },
@@ -1068,6 +1108,14 @@
     }
 
     async function saveMyData() {
+      // TEMP NFL: local-only save (does not touch college standings)
+      if (nflTestMode) {
+        applyLockedDefaults();
+        saveNflLocalPicks();
+        submitted = true;
+        clearPicksDirty();
+        return true;
+      }
       if (!currentUser || !activeWeekId) {
         alert('Not logged in or no active week.');
         return false;
@@ -1624,6 +1672,9 @@
           renderAll();
           startScorePolling();
           showWeekOpenToasts();
+          // TEMP NFL TEST button
+          const nflBox = document.getElementById('nfl-test-controls');
+          if (nflBox) nflBox.style.display = TEMP_ENABLE_NFL_TEST ? '' : 'none';
         } else {
           stopScorePolling();
           games = [];
@@ -1813,6 +1864,15 @@
     };
     document.querySelectorAll('#quick-picks-menu [data-qp]').forEach(btn => {
       btn.onclick = () => applyQuickPicks(btn.dataset.qp);
+    });
+
+    // TEMP NFL TEST — remove with TEMP_ENABLE_NFL_TEST
+    document.getElementById('nfl-test-btn')?.addEventListener('click', () => {
+      if (!TEMP_ENABLE_NFL_TEST) return;
+      enterNflTestMode();
+    });
+    document.getElementById('nfl-test-exit')?.addEventListener('click', () => {
+      exitNflTestMode();
     });
 
     document.getElementById('logout-btn').onclick = async () => {
@@ -3705,8 +3765,12 @@
       return null;
     }
 
-    async function fetchEspnScoreboard(dates) {
-      const url = `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
+    async function fetchEspnScoreboard(dates, { sport = 'college-football' } = {}) {
+      // TEMP: sport can be 'nfl' while TEMP_ENABLE_NFL_TEST is in use
+      const path = sport === 'nfl'
+        ? `football/nfl/scoreboard?limit=100&dates=${dates}`
+        : `football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
+      const url = `https://site.api.espn.com/apis/site/v2/sports/${path}`;
       let res;
       try {
         res = await fetch(url);
@@ -3717,6 +3781,96 @@
       if (!res.ok) throw new Error('ESPN scoreboard HTTP ' + res.status);
       return res.json();
     }
+
+    // ---- TEMP NFL TEST helpers (delete with TEMP_ENABLE_NFL_TEST) ----
+    function loadNflLocalPicks() {
+      try {
+        const raw = localStorage.getItem('pickem-nfl-test-picks');
+        return raw ? JSON.parse(raw) : { picks: {}, total: null, star: '' };
+      } catch (_) {
+        return { picks: {}, total: null, star: '' };
+      }
+    }
+    function saveNflLocalPicks() {
+      try {
+        localStorage.setItem('pickem-nfl-test-picks', JSON.stringify({
+          picks: myPicks, total: myTotal, star: myStar, savedAt: new Date().toISOString()
+        }));
+      } catch (_) {}
+    }
+    function enterNflTestMode() {
+      if (!TEMP_ENABLE_NFL_TEST) return;
+      nflTestSavedCollege = {
+        games: games.slice(),
+        activeWeekId,
+        myPicks: { ...myPicks },
+        myTotal,
+        myStar,
+        submitted
+      };
+      nflTestMode = true;
+      games = NFL_TEST_GAMES.map(g => ({ ...g, away_score: null, home_score: null }));
+      Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
+      const local = loadNflLocalPicks();
+      myPicks = local.picks || {};
+      myTotal = local.total;
+      myStar = local.star || '';
+      submitted = !!(local.savedAt);
+      document.getElementById('nfl-test-btn')?.classList.add('hidden');
+      document.getElementById('nfl-test-exit')?.classList.remove('hidden');
+      document.getElementById('nfl-test-banner')?.classList.remove('hidden');
+      const title = document.getElementById('picks-week-title');
+      if (title) title.textContent = 'NFL Preseason · Test';
+      const sub = document.getElementById('picks-week-subtitle');
+      if (sub) sub.textContent = 'HOF + Week 1 · Temporary test · Times in CT';
+      renderPicksEntry();
+      updateNflTestRecordBanner();
+      refreshScoresFromEspn({ silent: true }).then(() => updateNflTestRecordBanner());
+    }
+
+    function updateNflTestRecordBanner() {
+      const el = document.getElementById('nfl-test-banner');
+      if (!el || !nflTestMode) return;
+      let w = 0, l = 0, p = 0;
+      games.forEach(g => {
+        const sel = myPicks[g.id];
+        if (!sel) return;
+        const result = coveredSpread(sel, g.odds, g.away_score, g.home_score);
+        if (result === true) w++;
+        else if (result === false) l++;
+        else p++;
+      });
+      el.textContent = `NFL test · Record ${w}-${l}` + (p ? ` (${p} pending)` : '') + ' · local picks only · ESPN NFL scores';
+      el.classList.remove('hidden');
+    }
+    async function exitNflTestMode() {
+      nflTestMode = false;
+      if (nflTestSavedCollege) {
+        games = nflTestSavedCollege.games;
+        activeWeekId = nflTestSavedCollege.activeWeekId;
+        myPicks = nflTestSavedCollege.myPicks;
+        myTotal = nflTestSavedCollege.myTotal;
+        myStar = nflTestSavedCollege.myStar;
+        submitted = nflTestSavedCollege.submitted;
+        nflTestSavedCollege = null;
+      } else if (activeWeekId) {
+        await loadGamesForWeek(activeWeekId);
+        await loadMyData();
+      }
+      Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
+      games.forEach(g => {
+        const st = String(g.status || '').toLowerCase();
+        if ((st === 'final' || st === 'live') && g.away_score != null && g.home_score != null) {
+          LIVE_SCORES[g.id] = { away: g.away_score, home: g.home_score, status: st === 'final' ? 'FINAL' : 'LIVE' };
+        }
+      });
+      document.getElementById('nfl-test-btn')?.classList.remove('hidden');
+      document.getElementById('nfl-test-exit')?.classList.add('hidden');
+      document.getElementById('nfl-test-banner')?.classList.add('hidden');
+      updatePicksHeader();
+      renderPicksEntry();
+    }
+    // ---- END TEMP NFL TEST helpers ----
 
     async function fetchEspnEventsForWeek() {
       const w = currentWeekMeta();
@@ -3760,9 +3914,15 @@
         btn.textContent = 'Updating…';
       }
       try {
-        // Week 0 window — extend/change per week later
-        const dates = '20260829-20260905';
-        const data = await fetchEspnScoreboard(dates);
+        // TEMP NFL test uses NFL scoreboard; college uses CFB
+        const isNfl = !!nflTestMode;
+        const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
+        let dates = isNfl ? '20260806-20260816' : '20260829-20260905';
+        if (ds.length) {
+          const lo = ds[0], hi = ds[ds.length - 1];
+          dates = lo === hi ? lo : `${lo}-${hi}`;
+        }
+        const data = await fetchEspnScoreboard(dates, { sport: isNfl ? 'nfl' : 'college-football' });
         const events = data.events || [];
 
         const espnGames = [];
@@ -3778,13 +3938,38 @@
           else if (statusType.state === 'in' || (statusType.name || '').includes('IN_PROGRESS') || statusType.description === 'In Progress') status = 'live';
           else if ((statusType.name || '').includes('HALFTIME')) status = 'live';
 
+          // Prefer published home line when present (half-points)
+          let homeLine = null;
+          const oddsArr = comp.odds || [];
+          if (oddsArr.length) {
+            const det = String(oddsArr[0].details || '');
+            // e.g. "CAR -1.5" — convert to home line
+            const m = det.match(/([A-Z]{2,3})\s*([+-]?\d+(?:\.\d+)?)/);
+            if (m) {
+              const sideAbbr = m[1];
+              const line = parseFloat(m[2]);
+              const homeAbbr = home.team?.abbreviation || '';
+              const awayAbbr = away.team?.abbreviation || '';
+              if (!isNaN(line)) {
+                if (sideAbbr === homeAbbr) homeLine = line;
+                else if (sideAbbr === awayAbbr) homeLine = -line;
+              }
+            }
+            if (homeLine == null && oddsArr[0].spread != null) {
+              // ESPN sometimes stores spread vs home
+              const sp = parseFloat(oddsArr[0].spread);
+              if (!isNaN(sp)) homeLine = sp;
+            }
+          }
+
           espnGames.push({
             awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
             homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
             awayScore: away.score != null && away.score !== '' ? parseInt(away.score, 10) : null,
             homeScore: home.score != null && home.score !== '' ? parseInt(home.score, 10) : null,
             status,
-            detail: statusType.detail || statusType.shortDetail || ''
+            detail: statusType.detail || statusType.shortDetail || '',
+            homeLine
           });
         });
 
@@ -3801,17 +3986,32 @@
           const awayScore = match.awayScore;
           const homeScore = match.homeScore;
 
-          if (g.away_score === awayScore && g.home_score === homeScore && g.status === newStatus) continue;
+          // Keep half-point lines; if ESPN publishes a whole number, nudge to .5
+          if (match.homeLine != null && !isNaN(match.homeLine)) {
+            let line = Number(match.homeLine);
+            if (Math.abs(line % 1) < 1e-9) line = line > 0 ? line + 0.5 : line - 0.5;
+            if (Math.abs(line % 1 - 0.5) < 1e-9 || Math.abs(line % 1 + 0.5) < 1e-9) {
+              g.odds = line;
+            }
+          }
 
-          const { error } = await sb
-            .from('games')
-            .update({
-              away_score: awayScore,
-              home_score: homeScore,
-              status: newStatus
-            })
-            .eq('id', g.id);
-          if (error) throw error;
+          if (g.away_score === awayScore && g.home_score === homeScore && g.status === newStatus) {
+            // still may have updated odds above
+            continue;
+          }
+
+          // TEMP NFL: memory only — do not write college Supabase rows
+          if (!isNfl) {
+            const { error } = await sb
+              .from('games')
+              .update({
+                away_score: awayScore,
+                home_score: homeScore,
+                status: newStatus
+              })
+              .eq('id', g.id);
+            if (error) throw error;
+          }
 
           g.away_score = awayScore;
           g.home_score = homeScore;
@@ -3829,16 +4029,17 @@
         }
 
         if (updated > 0) {
-          if (document.getElementById('view-admin')?.classList.contains('active')) renderAdmin();
+          if (document.getElementById('view-admin')?.classList.contains('active') && !isNfl) renderAdmin();
           if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
-          if (document.getElementById('view-standings')?.classList.contains('active')) renderStandings('week');
-          if (document.getElementById('view-others')?.classList.contains('active')) renderOthers();
+          if (document.getElementById('view-standings')?.classList.contains('active') && !isNfl) renderStandings('week');
+          if (document.getElementById('view-others')?.classList.contains('active') && !isNfl) renderOthers();
+          if (isNfl) updateNflTestRecordBanner();
         }
 
         if (!silent) {
           alert(`ESPN scores: ${matched} game(s) matched, ${updated} updated.`);
         } else if (updated > 0) {
-          console.log(`[scores] ${updated} game(s) updated from ESPN`);
+          console.log(`[scores] ${updated} game(s) updated from ESPN${isNfl ? ' (NFL test)' : ''}`);
         }
         return { matched, updated };
       } catch (e) {
