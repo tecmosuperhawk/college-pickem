@@ -390,10 +390,24 @@
       max-width: 28rem;
     }
     .override-pick-row {
-      display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
-      padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
+      display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+      padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;
     }
-    .override-pick-row select { max-width: 140px; }
+    .override-pick-row .override-matchup {
+      flex: 1 1 12rem; min-width: 0; line-height: 1.35;
+    }
+    .override-pick-row select {
+      flex: 1 1 14rem;
+      min-width: min(100%, 12rem);
+      max-width: 100%;
+      width: auto;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.5rem;
+    }
+    @media (max-width: 600px) {
+      .override-pick-row { flex-direction: column; align-items: stretch; }
+      .override-pick-row select { flex: 1 1 auto; width: 100%; min-width: 0; }
+    }
     .week-open-toast {
       position: fixed; top: 4.5rem; left: 50%; transform: translateX(-50%);
       z-index: 200; max-width: min(420px, calc(100% - 1.5rem));
@@ -452,7 +466,7 @@
     /* Admin */
     .admin-game-row {
       display: grid;
-      grid-template-columns: 2rem 1fr 1fr 4.5rem 5rem 5rem 1fr 3.5rem 4rem 2rem;
+      grid-template-columns: 2rem minmax(9rem, 1.4fr) minmax(9rem, 1.4fr) 4.5rem 5rem 5.5rem minmax(6rem, 1fr) 3.5rem 4rem 2rem;
       gap: 0.4rem; align-items: center; padding: 0.5rem 0;
       border-bottom: 1px solid var(--border);
       font-size: 0.85rem;
@@ -463,6 +477,22 @@
     }
     .admin-game-row input, .admin-game-row select {
       padding: 0.35rem 0.45rem; font-size: 0.85rem; min-width: 0; width: 100%;
+    }
+    .admin-game-row select {
+      text-overflow: ellipsis;
+    }
+    /* Horizontal scroll on mid-width so team dropdowns don't crush */
+    #admin-games-list {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #admin-games-list .admin-game-row {
+      min-width: 720px;
+    }
+    @media (max-width: 900px) {
+      #admin-games-list .admin-game-row {
+        min-width: 0;
+      }
     }
     .admin-game-row input[type="checkbox"] {
       width: 1.1rem; height: 1.1rem; min-width: 1.1rem; padding: 0;
@@ -2766,28 +2796,55 @@
       return null;
     }
 
+    /** Only completed (final) games count toward standings W/L */
+    function gameIsComplete(g) {
+      if (!g) return false;
+      const st = String(g.status || '').toLowerCase();
+      if (st === 'final') return true;
+      // Require real scores AND the game must have started (kickoff passed)
+      if (g.away_score != null && g.home_score != null && isLocked(g)) {
+        // Treat as complete if locked with scores (covers delayed status updates)
+        return true;
+      }
+      return false;
+    }
+
+    /** Cover result only once the game is complete; otherwise pending */
+    function coverResultForStandings(selection, g) {
+      if (!gameIsComplete(g)) return null;
+      return coveredSpread(selection, g.odds, g.away_score, g.home_score);
+    }
+
     let standingsMode = 'week';
     let standingsSort = { key: 'pts', dir: 'desc' }; // overall sortable
     let standingsCacheRows = [];
 
     function weekIsFinal(gameList) {
       if (!gameList || !gameList.length) return false;
-      return gameList.every(g => {
-        const st = (g.status || '').toLowerCase();
-        if (st === 'final') return true;
-        if (g.away_score != null && g.home_score != null && isLocked(g)) return true;
-        return false;
-      });
+      return gameList.every(g => gameIsComplete(g));
+    }
+
+    function tbGameFromList(gameList) {
+      return (gameList || []).find(g => g.isTiebreaker || g.is_tiebreaker) || null;
+    }
+
+    /** TB guesses are hidden until the tiebreaker game has kicked off */
+    function tbGuessVisible(gameList) {
+      const tb = tbGameFromList(gameList);
+      if (!tb) return false;
+      return isLocked(tb) || gameIsComplete(tb);
     }
 
     function tbActualTotal(gameList) {
-      const tb = (gameList || []).find(g => g.isTiebreaker || g.is_tiebreaker);
+      const tb = tbGameFromList(gameList);
       if (!tb || tb.away_score == null || tb.home_score == null) return null;
+      if (!gameIsComplete(tb)) return null;
       return Number(tb.away_score) + Number(tb.home_score);
     }
 
-    function formatTbCell(r, weekFinal, actualTotal) {
+    function formatTbCell(r, weekFinal, actualTotal, { tbVisible } = {}) {
       if (!r.submitted) return '—';
+      if (tbVisible === false) return '🔒';
       if (r.tbGuess == null || isNaN(r.tbGuess)) return '—';
       if (!weekFinal || actualTotal == null) return String(r.tbGuess);
       const diff = Math.abs(r.tbGuess - actualTotal);
@@ -2795,7 +2852,7 @@
       return `${r.tbGuess} <span style="color:var(--muted);font-size:0.8rem;">(${diffStr} off)</span>`;
     }
 
-    function paintStandingsTable(rows, { weekFinal, actualTotal, showTb, showWeekWins, winners }) {
+    function paintStandingsTable(rows, { weekFinal, actualTotal, showTb, showWeekWins, winners, tbVisible }) {
       const body = document.getElementById('standings-body');
       const banner = document.getElementById('standings-winner-banner');
       const winnerSet = new Set((winners || []).map(w => w.userId));
@@ -2855,7 +2912,7 @@
           <td>${r.pts}</td>
           <td>${starCell}</td>
           ${weekWinsCell}
-          ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal)}</td>` : ''}
+          ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal, { tbVisible })}</td>` : ''}
         </tr>`;
       }).join('');
 
@@ -3044,7 +3101,8 @@
             Object.keys(picks).forEach(gid => {
               const g = gameById[gid];
               if (!g) return;
-              const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
+              // Only completed games count as wins/losses
+              const result = coverResultForStandings(picks[gid], g);
               if (result === true) {
                 wins++;
                 // 5★ tracked separately — does NOT add to weekly points / winner
@@ -3101,13 +3159,15 @@
             }
           }
 
+          const tbVisible = tbGuessVisible(games);
           standingsCacheRows = rows;
           paintStandingsTable(rows, {
             weekFinal: finalWeek,
             actualTotal,
             showTb: true,
             showWeekWins: false,
-            winners
+            winners,
+            tbVisible
           });
 
         } else {
@@ -3158,7 +3218,12 @@
             Object.keys(picks).forEach(gid => {
               const g = gameById[gid];
               if (!g) return;
-              const result = coveredSpread(picks[gid], g.odds, g.away_score, g.home_score);
+              // Map DB row to shape gameIsComplete expects
+              const gShape = {
+                ...g,
+                kickoff: g.kickoff_at || g.kickoff
+              };
+              const result = coverResultForStandings(picks[gid], gShape);
               if (result === true) {
                 t.wins++;
                 t.pts++;
@@ -3210,7 +3275,8 @@
               Object.keys(picks).forEach(gid => {
                 const g = gameById[gid];
                 if (!g || g.week_id !== w.id) return;
-                if (coveredSpread(picks[gid], g.odds, g.away_score, g.home_score) === true) wins++;
+                const gShape = { ...g, kickoff: g.kickoff_at || g.kickoff };
+                if (coverResultForStandings(picks[gid], gShape) === true) wins++;
               });
               const tbGuess = sheet.total_points_guess;
               let tbDist = null;
@@ -3431,7 +3497,7 @@
       gamesBox.innerHTML = games.map(g => {
         const sel = adminOverride.picks[g.id] || '';
         return `<div class="override-pick-row" data-gid="${g.id}">
-          <span style="flex:1;min-width:140px;">${g.num || ''}. ${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</span>
+          <span class="override-matchup">${g.num || ''}. ${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</span>
           <select data-override-pick="${g.id}">
             <option value="">—</option>
             <option value="away" ${sel === 'away' ? 'selected' : ''}>${escapeHtml(g.away)} ${formatOdds(-g.odds)}</option>
