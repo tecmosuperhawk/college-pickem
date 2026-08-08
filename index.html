@@ -2695,7 +2695,8 @@
         let html = `
           <p class="subtitle" style="margin-bottom:1rem;">
             ${players.length} player${players.length === 1 ? '' : 's'} submitted.
-            Tap a name to see their picks (only games that have started are shown).
+            Tap a name to view their picks (other players: only games that have started).
+            Viewing <strong>your</strong> sheet shows every pick — view only, no edits here.
           </p>
           <div class="card" style="padding:0;overflow:hidden;">
             <table style="margin:0;">
@@ -2729,52 +2730,70 @@
       const picks = othersCache.picksBySheet[sheetId] || {};
       if (!player) return;
 
-      const started = games.filter(g => isLocked(g));
+      const isSelf = !!player.isYou;
+      // Your own sheet: show every game (view-only). Others: only games that have started.
+      const visibleGames = isSelf ? games.slice() : games.filter(g => isLocked(g));
       const upcoming = games.filter(g => !isLocked(g));
 
       let html = `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-            <h3 style="margin:0;">${player.name}${player.isYou ? ' (you)' : ''}</h3>
+            <h3 style="margin:0;">${escapeHtml(player.name)}${isSelf ? ' (you)' : ''}</h3>
             <button class="btn btn-sm btn-outline" id="others-back-list">← All players</button>
           </div>
       `;
+      if (isSelf) {
+        html += `<p style="font-size:0.85rem;color:var(--muted);margin:0 0 0.75rem;">View only — change picks on <strong>My Picks</strong>. 🔒 = game not started yet.</p>`;
+      }
 
-      if (!started.length) {
+      if (!visibleGames.length) {
         html += `<p style="color:var(--muted);font-size:0.9rem;margin:0;">No games have started yet — picks stay hidden until kickoff.</p>`;
       } else {
-        html += `<table><thead><tr><th>Game</th><th>Pick</th><th>Line</th></tr></thead><tbody>`;
-        started.forEach(g => {
+        html += `<table><thead><tr><th>Game</th><th>Pick</th><th>Line</th>${isSelf ? '<th></th>' : ''}</tr></thead><tbody>`;
+        visibleGames.forEach(g => {
+          const locked = isLocked(g);
           const sel = picks[g.id];
           const team = sel === 'away' ? g.away : sel === 'home' ? g.home : '—';
           const line = sel === 'away' ? formatOdds(-g.odds) : sel === 'home' ? formatOdds(g.odds) : '';
+          const lockCell = isSelf
+            ? `<td style="text-align:center;color:var(--muted);">${locked ? '' : '🔒'}</td>`
+            : '';
           html += `<tr>
-            <td>${g.away} @ ${g.home}</td>
-            <td><strong>${team}</strong></td>
+            <td>${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</td>
+            <td><strong>${escapeHtml(team)}</strong></td>
             <td style="color:var(--accent);">${line}</td>
+            ${lockCell}
           </tr>`;
         });
         html += `</tbody></table>`;
       }
 
       const tbGame = games.find(g => g.isTiebreaker);
-      if (tbGame && isLocked(tbGame) && player.totalGuess != null) {
-        html += `<p style="margin-top:0.75rem;font-size:0.9rem;">Tiebreaker total: <strong>${player.totalGuess}</strong></p>`;
-      } else if (tbGame && !isLocked(tbGame)) {
-        html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">Tiebreaker total hidden until that game starts.</p>`;
+      if (tbGame) {
+        if (isSelf || isLocked(tbGame)) {
+          if (player.totalGuess != null) {
+            const lock = !isLocked(tbGame) ? ' 🔒' : '';
+            html += `<p style="margin-top:0.75rem;font-size:0.9rem;">Tiebreaker total: <strong>${player.totalGuess}</strong>${lock}</p>`;
+          } else {
+            html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">No tiebreaker total entered.</p>`;
+          }
+        } else {
+          html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">Tiebreaker total hidden until that game starts.</p>`;
+        }
       }
 
       if (player.fiveStarGameId) {
         const fg = games.find(g => g.id === player.fiveStarGameId);
-        if (fg && isLocked(fg)) {
+        if (fg && (isSelf || isLocked(fg))) {
           const team = player.fiveStarSide === 'away' ? fg.away : fg.home;
-          html += `<p style="font-size:0.9rem;">5★: <strong>${team}</strong> (${fg.away} @ ${fg.home})</p>`;
+          const lock = !isLocked(fg) ? ' 🔒' : '';
+          html += `<p style="font-size:0.9rem;">5★: <strong>${escapeHtml(team)}</strong> (${escapeHtml(fg.away)} @ ${escapeHtml(fg.home)})${lock}</p>`;
         } else {
           html += `<p style="font-size:0.85rem;color:var(--muted);">5★ hidden until that game starts.</p>`;
         }
       }
 
-      if (upcoming.length) {
+      if (!isSelf && upcoming.length) {
         html += `<p style="margin-top:0.75rem;font-size:0.8rem;color:var(--muted);">${upcoming.length} game${upcoming.length === 1 ? '' : 's'} not started — those picks stay hidden.</p>`;
       }
 
