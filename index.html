@@ -827,6 +827,7 @@
         <div id="admin-games-list"></div>
         <div style="margin-top:1rem;">
           <button class="btn" id="admin-save">Save Slate</button>
+          <button class="btn btn-sm btn-outline" id="admin-prune-orphans" title="Delete pick rows that point at games no longer on this week’s slate">Prune orphan picks</button>
           <span class="success-msg hidden" id="admin-save-msg">Slate saved.</span>
         </div>
       </div>
@@ -2664,9 +2665,18 @@
           picksBySheet[p.pick_sheet_id][p.game_id] = p.selection;
         });
 
+        // Only count picks that match games currently on this week's slate
+        // (re-saving a slate can leave orphan picks on deleted game UUIDs)
+        const currentGameIds = new Set(games.map(g => g.id));
         const players = sheetList.map(s => {
           const name = s.profiles?.display_name
             || (s.user_id === currentUser?.id ? currentUser.name : 'Player');
+          const raw = picksBySheet[s.id] || {};
+          const valid = {};
+          Object.keys(raw).forEach(gid => {
+            if (currentGameIds.has(gid)) valid[gid] = raw[gid];
+          });
+          picksBySheet[s.id] = valid;
           return {
             sheetId: s.id,
             userId: s.user_id,
@@ -2675,7 +2685,7 @@
             totalGuess: s.total_points_guess,
             fiveStarGameId: s.five_star_game_id,
             fiveStarSide: s.five_star_side,
-            pickCount: Object.keys(picksBySheet[s.id] || {}).length
+            pickCount: Object.keys(valid).length
           };
         }).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -4536,6 +4546,71 @@
       renderWeekTabs();
       renderAdmin();
       alert(`${label} created. Add games, pull odds from ESPN, then Save Slate.`);
+    };
+
+    /** Delete pick rows whose game_id is not on the current week's slate */
+    async function pruneOrphanPicksForWeek() {
+      if (!activeWeekId) throw new Error('No active week');
+      const validIds = games.filter(g => g._fromDb && g.id).map(g => g.id);
+      const { data: sheets, error: sErr } = await sb
+        .from('pick_sheets')
+        .select('id')
+        .eq('week_id', activeWeekId);
+      if (sErr) throw sErr;
+      const sheetIds = (sheets || []).map(s => s.id);
+      if (!sheetIds.length) return { deleted: 0 };
+
+      const { data: allPicks, error: pErr } = await sb
+        .from('picks')
+        .select('id, game_id, pick_sheet_id')
+        .in('pick_sheet_id', sheetIds);
+      if (pErr) throw pErr;
+
+      const valid = new Set(validIds);
+      const orphanIds = (allPicks || []).filter(p => !valid.has(p.game_id)).map(p => p.id);
+      if (!orphanIds.length) return { deleted: 0 };
+
+      // Delete in chunks
+      let deleted = 0;
+      for (let i = 0; i < orphanIds.length; i += 100) {
+        const chunk = orphanIds.slice(i, i + 100);
+        const { error } = await sb.from('picks').delete().in('id', chunk);
+        if (error) throw error;
+        deleted += chunk.length;
+      }
+      return { deleted };
+    }
+
+    document.getElementById('admin-prune-orphans').onclick = async () => {
+      if (!currentUser?.isAdmin) {
+        alert('Admin only.');
+        return;
+      }
+      if (!activeWeekId) {
+        alert('No active week loaded.');
+        return;
+      }
+      if (!confirm('Delete pick rows that point at games no longer on this week’s slate?\n\nThis does not change current-slate picks — only leftovers from old game rows.')) {
+        return;
+      }
+      const btn = document.getElementById('admin-prune-orphans');
+      btn.disabled = true;
+      btn.textContent = 'Pruning…';
+      try {
+        const { deleted } = await pruneOrphanPicksForWeek();
+        alert(deleted
+          ? `Removed ${deleted} orphan pick row${deleted === 1 ? '' : 's'}.`
+          : 'No orphan picks found for this week.');
+        if (document.getElementById('view-others')?.classList.contains('active')) {
+          renderOthers();
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Prune failed: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Prune orphan picks';
+      }
     };
 
     document.getElementById('admin-save').onclick = async () => {
