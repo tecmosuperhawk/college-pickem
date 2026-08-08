@@ -1108,14 +1108,7 @@
     }
 
     async function saveMyData() {
-      // TEMP NFL: local-only save (does not touch college standings)
-      if (nflTestMode) {
-        applyLockedDefaults();
-        saveNflLocalPicks();
-        submitted = true;
-        clearPicksDirty();
-        return true;
-      }
+      // TEMP NFL: still saves to Supabase under the "NFL Test" week so group standings work
       if (!currentUser || !activeWeekId) {
         alert('Not logged in or no active week.');
         return false;
@@ -1346,8 +1339,12 @@
 
     function renderWeekTabs() {
       // Standings can show all weeks that exist (for past week standings); picks/group use open/active
-      const openWeeks = allWeeks.filter(w => w.picks_open || w.is_active);
-      const allForStandings = allWeeks.length ? allWeeks : openWeeks;
+      // TEMP: hide "NFL Test" from normal tabs unless in nflTestMode
+      const base = allWeeks.filter(w => nflTestMode
+        ? (w.label === 'NFL Test' || w.week_number === -1)
+        : !(w.label === 'NFL Test' || w.week_number === -1));
+      const openWeeks = base.filter(w => w.picks_open || w.is_active);
+      const allForStandings = base.length ? base : openWeeks;
       const containers = [
         { id: 'week-tabs', weeks: openWeeks, highlight: true },
         { id: 'week-tabs-group', weeks: openWeeks, highlight: true },
@@ -1874,6 +1871,7 @@
     document.getElementById('nfl-test-exit')?.addEventListener('click', () => {
       exitNflTestMode();
     });
+    // When in NFL test mode, Standings / Group Picks use the shared NFL Test week
 
     document.getElementById('logout-btn').onclick = async () => {
       if (!confirmLeavePicks('You have unsaved picks. Log out without saving?')) return;
@@ -3783,49 +3781,122 @@
     }
 
     // ---- TEMP NFL TEST helpers (delete with TEMP_ENABLE_NFL_TEST) ----
-    function loadNflLocalPicks() {
-      try {
-        const raw = localStorage.getItem('pickem-nfl-test-picks');
-        return raw ? JSON.parse(raw) : { picks: {}, total: null, star: '' };
-      } catch (_) {
-        return { picks: {}, total: null, star: '' };
+    /** Ensure shared "NFL Test" week + games exist in Supabase so standings/group picks work. */
+    async function ensureNflTestWeekInDb() {
+      let week = allWeeks.find(w => w.label === 'NFL Test' || w.week_number === -1);
+      if (!week) {
+        const { data, error } = await sb.from('weeks').insert({
+          season_year: 2026,
+          week_number: -1,
+          label: 'NFL Test',
+          is_active: false,
+          picks_open: true
+        }).select('*').single();
+        if (error) {
+          // Maybe another user created it — re-fetch
+          await loadWeeksFromSupabase();
+          week = allWeeks.find(w => w.label === 'NFL Test' || w.week_number === -1);
+          if (!week) throw error;
+        } else {
+          week = { ...data, picks_open: true, picks_open_at: data.picks_open_at || null };
+          allWeeks.push(week);
+          allWeeks.sort((a, b) => (a.week_number || 0) - (b.week_number || 0));
+        }
       }
+
+      const weekId = week.id;
+      const { data: existing, error: gErr } = await sb
+        .from('games')
+        .select('*')
+        .eq('week_id', weekId)
+        .order('sort_order');
+      if (gErr) throw gErr;
+
+      if (!existing || existing.length < NFL_TEST_GAMES.length) {
+        // Seed / fill missing NFL games (match by away+home)
+        const have = new Set((existing || []).map(g => `${g.away_team}|${g.home_team}`.toLowerCase()));
+        const toInsert = [];
+        NFL_TEST_GAMES.forEach((g, idx) => {
+          const key = `${g.away}|${g.home}`.toLowerCase();
+          if (have.has(key)) return;
+          toInsert.push({
+            week_id: weekId,
+            sort_order: g.num || (idx + 1),
+            away_team: g.away,
+            home_team: g.home,
+            odds: g.odds,
+            game_time: g.time || null,
+            game_date: g.date || null,
+            kickoff_at: g.kickoff,
+            tv: g.tv || null,
+            notes: g.notes || null,
+            is_tiebreaker: !!g.isTiebreaker,
+            total_line: g.totalLine,
+            status: 'scheduled'
+          });
+        });
+        if (toInsert.length) {
+          const { error: insErr } = await sb.from('games').insert(toInsert);
+          if (insErr) throw insErr;
+        }
+      }
+
+      await loadGamesForWeek(weekId);
+      // Preserve half-point lines from template when DB odds missing
+      games.forEach(g => {
+        const tmpl = NFL_TEST_GAMES.find(t =>
+          t.away.toLowerCase() === String(g.away).toLowerCase() &&
+          t.home.toLowerCase() === String(g.home).toLowerCase()
+        );
+        if (tmpl && (g.odds == null || g.odds === '')) g.odds = tmpl.odds;
+        if (tmpl && g.totalLine == null && tmpl.totalLine != null) g.totalLine = tmpl.totalLine;
+        if (tmpl && tmpl.isTiebreaker) g.isTiebreaker = true;
+      });
+      return weekId;
     }
-    function saveNflLocalPicks() {
-      try {
-        localStorage.setItem('pickem-nfl-test-picks', JSON.stringify({
-          picks: myPicks, total: myTotal, star: myStar, savedAt: new Date().toISOString()
-        }));
-      } catch (_) {}
-    }
-    function enterNflTestMode() {
+
+    async function enterNflTestMode() {
       if (!TEMP_ENABLE_NFL_TEST) return;
-      nflTestSavedCollege = {
-        games: games.slice(),
-        activeWeekId,
-        myPicks: { ...myPicks },
-        myTotal,
-        myStar,
-        submitted
-      };
-      nflTestMode = true;
-      games = NFL_TEST_GAMES.map(g => ({ ...g, away_score: null, home_score: null }));
-      Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
-      const local = loadNflLocalPicks();
-      myPicks = local.picks || {};
-      myTotal = local.total;
-      myStar = local.star || '';
-      submitted = !!(local.savedAt);
-      document.getElementById('nfl-test-btn')?.classList.add('hidden');
-      document.getElementById('nfl-test-exit')?.classList.remove('hidden');
-      document.getElementById('nfl-test-banner')?.classList.remove('hidden');
-      const title = document.getElementById('picks-week-title');
-      if (title) title.textContent = 'NFL Preseason · Test';
-      const sub = document.getElementById('picks-week-subtitle');
-      if (sub) sub.textContent = 'HOF + Week 1 · Temporary test · Times in CT';
-      renderPicksEntry();
-      updateNflTestRecordBanner();
-      refreshScoresFromEspn({ silent: true }).then(() => updateNflTestRecordBanner());
+      if (!currentUser) {
+        alert('Log in first to use NFL test mode.');
+        return;
+      }
+      const btn = document.getElementById('nfl-test-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+      try {
+        nflTestSavedCollege = {
+          games: games.slice(),
+          activeWeekId,
+          myPicks: { ...myPicks },
+          myTotal,
+          myStar,
+          submitted,
+          myPickSheetId
+        };
+        nflTestMode = true;
+        Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
+        await ensureNflTestWeekInDb();
+        await loadMyData();
+        document.getElementById('nfl-test-btn')?.classList.add('hidden');
+        document.getElementById('nfl-test-exit')?.classList.remove('hidden');
+        document.getElementById('nfl-test-banner')?.classList.remove('hidden');
+        const title = document.getElementById('picks-week-title');
+        if (title) title.textContent = 'NFL Preseason · Test';
+        const sub = document.getElementById('picks-week-subtitle');
+        if (sub) sub.textContent = 'HOF + Week 1 · Shared test week · Times in CT';
+        renderWeekTabs();
+        renderPicksEntry();
+        updateNflTestRecordBanner();
+        await refreshScoresFromEspn({ silent: true });
+        updateNflTestRecordBanner();
+      } catch (e) {
+        console.error(e);
+        nflTestMode = false;
+        alert('Could not start NFL test mode: ' + (e.message || e) +
+          '\n\nYou may need INSERT permission on weeks/games, or create a week labeled "NFL Test" in Admin first.');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'NFL'; }
+      }
     }
 
     function updateNflTestRecordBanner() {
@@ -3840,34 +3911,34 @@
         else if (result === false) l++;
         else p++;
       });
-      el.textContent = `NFL test · Record ${w}-${l}` + (p ? ` (${p} pending)` : '') + ' · local picks only · ESPN NFL scores';
+      el.textContent = `NFL test · You ${w}-${l}` + (p ? ` (${p} pending)` : '') +
+        ' · Standings/Group Picks show everyone’s results · ESPN NFL scores';
       el.classList.remove('hidden');
     }
+
     async function exitNflTestMode() {
       nflTestMode = false;
       if (nflTestSavedCollege) {
-        games = nflTestSavedCollege.games;
         activeWeekId = nflTestSavedCollege.activeWeekId;
-        myPicks = nflTestSavedCollege.myPicks;
-        myTotal = nflTestSavedCollege.myTotal;
-        myStar = nflTestSavedCollege.myStar;
-        submitted = nflTestSavedCollege.submitted;
+        myPickSheetId = nflTestSavedCollege.myPickSheetId;
         nflTestSavedCollege = null;
-      } else if (activeWeekId) {
-        await loadGamesForWeek(activeWeekId);
-        await loadMyData();
       }
       Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
-      games.forEach(g => {
-        const st = String(g.status || '').toLowerCase();
-        if ((st === 'final' || st === 'live') && g.away_score != null && g.home_score != null) {
-          LIVE_SCORES[g.id] = { away: g.away_score, home: g.home_score, status: st === 'final' ? 'FINAL' : 'LIVE' };
-        }
-      });
+      if (activeWeekId) {
+        await loadGamesForWeek(activeWeekId);
+        await loadMyData();
+      } else {
+        games = [];
+        myPicks = {};
+        myTotal = null;
+        myStar = '';
+        submitted = false;
+      }
       document.getElementById('nfl-test-btn')?.classList.remove('hidden');
       document.getElementById('nfl-test-exit')?.classList.add('hidden');
       document.getElementById('nfl-test-banner')?.classList.add('hidden');
       updatePicksHeader();
+      renderWeekTabs();
       renderPicksEntry();
     }
     // ---- END TEMP NFL TEST helpers ----
@@ -4000,8 +4071,8 @@
             continue;
           }
 
-          // TEMP NFL: memory only — do not write college Supabase rows
-          if (!isNfl) {
+          // Write scores to Supabase for both college and NFL Test week (shared standings)
+          if (g.id && !String(g.id).startsWith('nfl-')) {
             const { error } = await sb
               .from('games')
               .update({
@@ -4029,10 +4100,10 @@
         }
 
         if (updated > 0) {
-          if (document.getElementById('view-admin')?.classList.contains('active') && !isNfl) renderAdmin();
+          if (document.getElementById('view-admin')?.classList.contains('active')) renderAdmin();
           if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
-          if (document.getElementById('view-standings')?.classList.contains('active') && !isNfl) renderStandings('week');
-          if (document.getElementById('view-others')?.classList.contains('active') && !isNfl) renderOthers();
+          if (document.getElementById('view-standings')?.classList.contains('active')) renderStandings('week');
+          if (document.getElementById('view-others')?.classList.contains('active')) renderOthers();
           if (isNfl) updateNflTestRecordBanner();
         }
 
