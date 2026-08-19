@@ -1164,7 +1164,7 @@
     }
 
     async function saveMyData() {
-      // TEMP NFL: still saves to Supabase under the "NFL Test" week so group standings work
+      // Saves picks to the active week in Supabase
       if (!currentUser || !activeWeekId) {
         alert('Not logged in or no active week.');
         return false;
@@ -1699,14 +1699,23 @@
       });
     }
 
+    function isCollegeWeek(w) {
+      if (!w) return false;
+      if (w.week_number === -1) return false;
+      if (/nfl/i.test(String(w.label || ''))) return false;
+      return true;
+    }
+
     async function loadGamesFromSupabase() {
       try {
         await loadWeeksFromSupabase();
-        // Prefer currently selected week if still valid; else first picks_open; else is_active; else first
-        let prefer = allWeeks.find(w => w.id === activeWeekId)
-          || allWeeks.find(w => w.picks_open)
-          || allWeeks.find(w => w.is_active)
-          || allWeeks[0];
+        const collegeWeeks = allWeeks.filter(isCollegeWeek);
+        // Prefer currently selected college week; else first picks_open; else is_active; else first college week
+        let prefer = collegeWeeks.find(w => w.id === activeWeekId)
+          || collegeWeeks.find(w => w.picks_open)
+          || collegeWeeks.find(w => w.is_active)
+          || collegeWeeks[0];
+        // If activeWeekId pointed at NFL Test (or missing), force a college week
         if (!prefer) {
           games = [];
           activeWeekId = null;
@@ -1944,8 +1953,6 @@
     document.querySelectorAll('#quick-picks-menu [data-qp]').forEach(btn => {
       btn.onclick = () => applyQuickPicks(btn.dataset.qp);
     });
-
-    // When in NFL test mode, Standings / Group Picks use the shared NFL Test week
 
     document.getElementById('logout-btn').onclick = async () => {
       if (!confirmLeavePicks('You have unsaved picks. Log out without saving?')) return;
