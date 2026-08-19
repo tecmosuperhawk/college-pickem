@@ -276,6 +276,15 @@
     .team.selected { border-color: var(--accent); background: var(--pick-bg); }
     .team.away.selected { border-color: var(--away); }
     .team.home.selected { border-color: var(--home); }
+    /* After final: green = cover, red = miss (overrides side color) */
+    .team.selected.correct {
+      border-color: var(--success) !important;
+      background: rgba(34, 197, 94, 0.18) !important;
+    }
+    .team.selected.incorrect {
+      border-color: var(--danger) !important;
+      background: rgba(239, 68, 68, 0.14) !important;
+    }
     .team.disabled { cursor: default; opacity: 0.9; }
     .team-name { font-weight: 700; font-size: 1rem; }
     .team-score { font-size: 0.9rem; color: var(--muted); font-weight: 600; }
@@ -2285,6 +2294,13 @@
       games.forEach(g => {
         const locked = isLocked(g);
         const sel = myPicks[g.id] || null;
+        // Green/red only after the game is final (or complete with scores)
+        let resultClass = '';
+        if (sel && gameIsComplete(g)) {
+          const covered = coveredSpread(sel, g.odds, g.away_score, g.home_score);
+          if (covered === true) resultClass = 'correct';
+          else if (covered === false) resultClass = 'incorrect';
+        }
         const card = document.createElement('div');
         card.className = 'game-card' + (g.isTiebreaker ? ' tiebreaker-game' : '') + (locked ? ' locked' : '');
         card.dataset.id = g.id;
@@ -2297,14 +2313,14 @@
             ${gameStatusBadge(g)}
           </div>
           <div class="game-body">
-            <div class="team away ${sel==='away'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
+            <div class="team away ${sel==='away'?'selected':''} ${resultClass && sel==='away'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
               <span class="marker">•</span>
               <span class="team-name">${g.away}</span>
               ${displayScoreForTeam(g, 'away')}
               <span class="team-line">${formatOdds(-g.odds)}</span>
             </div>
             <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
-            <div class="team home ${sel==='home'?'selected':''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
+            <div class="team home ${sel==='home'?'selected':''} ${resultClass && sel==='home'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
               <span class="marker">•</span>
               <span class="team-name">${g.home}</span>
               ${displayScoreForTeam(g, 'home')}
@@ -4096,7 +4112,16 @@
         let dates = isNfl ? '20260806-20260816' : '20260829-20260905';
         if (ds.length) {
           const lo = ds[0], hi = ds[ds.length - 1];
-          dates = lo === hi ? lo : `${lo}-${hi}`;
+          // Pad NFL window a day on each side so late finishes / timezone edges still match
+          if (isNfl && lo === hi) {
+            const d = new Date(lo.slice(0,4) + '-' + lo.slice(4,6) + '-' + lo.slice(6,8) + 'T12:00:00Z');
+            const prev = new Date(d.getTime() - 86400000);
+            const next = new Date(d.getTime() + 86400000);
+            const fmt = x => x.toISOString().slice(0,10).replace(/-/g,'');
+            dates = `${fmt(prev)}-${fmt(next)}`;
+          } else {
+            dates = lo === hi ? lo : `${lo}-${hi}`;
+          }
         }
         const data = await fetchEspnScoreboard(dates, { sport: isNfl ? 'nfl' : 'college-football' });
         const events = data.events || [];
@@ -4138,11 +4163,16 @@
             }
           }
 
+          const awayScoreRaw = away.score;
+          const homeScoreRaw = home.score;
+          const awayScore = awayScoreRaw != null && awayScoreRaw !== '' ? parseInt(awayScoreRaw, 10) : null;
+          const homeScore = homeScoreRaw != null && homeScoreRaw !== '' ? parseInt(homeScoreRaw, 10) : null;
+
           espnGames.push({
             awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
             homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
-            awayScore: away.score != null && away.score !== '' ? parseInt(away.score, 10) : null,
-            homeScore: home.score != null && home.score !== '' ? parseInt(home.score, 10) : null,
+            awayScore: isNaN(awayScore) ? null : awayScore,
+            homeScore: isNaN(homeScore) ? null : homeScore,
             status,
             detail: statusType.detail || statusType.shortDetail || '',
             homeLine
@@ -4151,16 +4181,24 @@
 
         let matched = 0;
         let updated = 0;
+        let dbErrors = 0;
         for (const g of games) {
           const match = espnGames.find(eg =>
-            teamMatches(g.away, eg.awayName) && teamMatches(g.home, eg.homeName)
+            (teamMatches(g.away, eg.awayName) && teamMatches(g.home, eg.homeName)) ||
+            (teamMatches(g.away, eg.homeName) && teamMatches(g.home, eg.awayName))
           );
           if (!match) continue;
           matched++;
 
+          // If ESPN has home/away swapped relative to our slate, still use our sides' scores by name
+          let awayScore = match.awayScore;
+          let homeScore = match.homeScore;
+          if (!(teamMatches(g.away, match.awayName) && teamMatches(g.home, match.homeName))) {
+            // swapped names
+            awayScore = match.homeScore;
+            homeScore = match.awayScore;
+          }
           const newStatus = match.status;
-          const awayScore = match.awayScore;
-          const homeScore = match.homeScore;
 
           // Keep half-point lines; if ESPN publishes a whole number, nudge to .5
           if (match.homeLine != null && !isNaN(match.homeLine)) {
@@ -4171,12 +4209,24 @@
             }
           }
 
-          if (g.away_score === awayScore && g.home_score === homeScore && g.status === newStatus) {
-            // still may have updated odds above
+          const same =
+            g.away_score === awayScore &&
+            g.home_score === homeScore &&
+            String(g.status || '').toLowerCase() === String(newStatus || '').toLowerCase();
+          if (same) {
+            // Still ensure LIVE_SCORES is populated for UI
+            if ((newStatus === 'final' || newStatus === 'live') && awayScore != null && homeScore != null) {
+              LIVE_SCORES[g.id] = {
+                away: awayScore,
+                home: homeScore,
+                status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE')
+              };
+            }
             continue;
           }
 
-          // Write scores to Supabase for both college and NFL Test week (shared standings)
+          // Write scores to Supabase (shared standings). Do NOT abort the whole
+          // refresh if RLS blocks a write — still apply scores in the UI.
           if (g.id && !String(g.id).startsWith('nfl-')) {
             const { error } = await sb
               .from('games')
@@ -4186,7 +4236,10 @@
                 status: newStatus
               })
               .eq('id', g.id);
-            if (error) throw error;
+            if (error) {
+              dbErrors++;
+              console.warn('Score DB write failed for', g.away, '@', g.home, error.message || error);
+            }
           }
 
           g.away_score = awayScore;
@@ -4204,7 +4257,7 @@
           updated++;
         }
 
-        if (updated > 0) {
+        if (updated > 0 || matched > 0) {
           if (document.getElementById('view-admin')?.classList.contains('active')) renderAdmin();
           if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
           if (document.getElementById('view-standings')?.classList.contains('active')) renderStandings('week');
@@ -4213,11 +4266,13 @@
         }
 
         if (!silent) {
-          alert(`ESPN scores: ${matched} game(s) matched, ${updated} updated.`);
+          let msg = `ESPN scores: ${matched} game(s) matched, ${updated} updated.`;
+          if (dbErrors) msg += `\n\nNote: ${dbErrors} could not be saved to the database (permissions). Scores still show in this session.`;
+          alert(msg);
         } else if (updated > 0) {
-          console.log(`[scores] ${updated} game(s) updated from ESPN${isNfl ? ' (NFL test)' : ''}`);
+          console.log(`[scores] ${updated} game(s) updated from ESPN${isNfl ? ' (NFL test)' : ''}${dbErrors ? ` (${dbErrors} DB write errors)` : ''}`);
         }
-        return { matched, updated };
+        return { matched, updated, dbErrors };
       } catch (e) {
         console.error('Score refresh failed', e);
         if (!silent) {
@@ -4227,7 +4282,7 @@
       } finally {
         if (!silent && btn) {
           btn.disabled = false;
-          btn.textContent = '↻ Refresh Scores (ESPN)';
+          btn.textContent = '↻ Scores (ESPN)';
         }
       }
     }
