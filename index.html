@@ -2591,9 +2591,9 @@
         ss.style.color = 'var(--danger)';
       }
 
-      const totalOk = !tbOpen || (myTotal !== null && !isNaN(myTotal));
-      const ready = openPicked === openGames.length && totalOk && !!myStar;
-      document.getElementById('submit-btn').disabled = !ready;
+      // WIP saves allowed — button stays enabled whenever there is a slate
+      const submitBtn = document.getElementById('submit-btn');
+      if (submitBtn) submitBtn.disabled = !games.length;
 
       // Hint about locked defaults
       const hint = document.getElementById('locked-hint');
@@ -2607,6 +2607,23 @@
       }
     }
 
+    /** Build a short reminder for anything still incomplete (open games only). */
+    function incompletePicksReminder() {
+      const openGames = games.filter(g => !isLocked(g));
+      const missingGames = openGames.filter(g => !myPicks[g.id]).length;
+      const tbGame = games.find(g => g.isTiebreaker);
+      const tbOpen = tbGame && !isLocked(tbGame);
+      const missingTb = tbOpen && (myTotal === null || isNaN(myTotal));
+      const missingStar = !myStar;
+      const parts = [];
+      if (missingGames > 0) {
+        parts.push(`${missingGames} game${missingGames === 1 ? '' : 's'}`);
+      }
+      if (missingTb) parts.push('tiebreaker total');
+      if (missingStar) parts.push('5★ pick');
+      return parts;
+    }
+
     document.getElementById('submit-btn').onclick = async () => {
       const btn = document.getElementById('submit-btn');
       btn.disabled = true;
@@ -2616,11 +2633,17 @@
       updateEntryStatus();
       if (ok) {
         const flash = document.getElementById('save-flash');
+        const missing = incompletePicksReminder();
+        if (missing.length) {
+          flash.innerHTML = `Picks saved successfully. <span style="font-weight:600;color:var(--muted);">Still needed: ${missing.join(', ')}.</span>`;
+        } else {
+          flash.textContent = 'Picks saved successfully — sheet is complete.';
+        }
         flash.classList.remove('hidden');
         clearTimeout(window._saveFlashTimer);
         window._saveFlashTimer = setTimeout(() => {
           flash.classList.add('hidden');
-        }, 3000);
+        }, missing.length ? 5000 : 3000);
       }
     };
 
