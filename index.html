@@ -1498,25 +1498,34 @@
       }
     }
 
+    /** True when we have real scores and the game has started (treat as done for UI) */
+    function hasDisplayableScores(g) {
+      const score = LIVE_SCORES[g.id];
+      const away = score?.away ?? g.away_score;
+      const home = score?.home ?? g.home_score;
+      return away != null && home != null && !isNaN(Number(away)) && !isNaN(Number(home));
+    }
+
     /** Open / Locked / Live / Final badge for a game card */
     function gameStatusBadge(g) {
       const score = LIVE_SCORES[g.id];
       const locked = isLocked(g);
       const st = String(g.status || score?.status || '').toLowerCase();
-      const isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
+      let isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
       const isLive = !isFinal && (
         st === 'live' || st === 'in_progress' || st === 'in progress' ||
         String(score?.status || '').toUpperCase() === 'LIVE' ||
         /in_progress|halftime|end of/i.test(String(score?.status || ''))
       );
+      // If kickoff has passed and we have scores but status never flipped to final, still show Final
+      if (!isFinal && !isLive && locked && hasDisplayableScores(g)) {
+        isFinal = true;
+      }
 
-      const hasRealScore = (score && score.away != null && score.home != null) ||
-        (g.away_score != null && g.home_score != null);
-      // Don't show 0-0 (or any score) until the game is live or final
+      const hasRealScore = hasDisplayableScores(g);
       const scoreBit = (isFinal || isLive) && hasRealScore
         ? ` ${score?.away ?? g.away_score}–${score?.home ?? g.home_score}`
         : '';
-      // Lock from kickoff onward (locked / live / final)
       const lockIco = '<span class="lock-ico" aria-hidden="true">🔒</span>';
 
       if (isFinal) {
@@ -1537,12 +1546,15 @@
     function displayScoreForTeam(g, side) {
       const score = LIVE_SCORES[g.id];
       const st = String(g.status || score?.status || '').toLowerCase();
-      const isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
+      let isFinal = st === 'final' || String(score?.status || '').toUpperCase() === 'FINAL';
       const isLive = !isFinal && (
         st === 'live' || st === 'in_progress' ||
         String(score?.status || '').toUpperCase() === 'LIVE' ||
         /in_progress|halftime/i.test(String(score?.status || ''))
       );
+      if (!isFinal && !isLive && isLocked(g) && hasDisplayableScores(g)) {
+        isFinal = true;
+      }
       if (!isFinal && !isLive) return '';
       const val = score
         ? (side === 'away' ? score.away : score.home)
@@ -1652,8 +1664,12 @@
       games = (rows || []).map(mapGameRow);
       Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
       games.forEach(g => {
-        const st = String(g.status || '').toLowerCase();
-        // Only mirror scores into LIVE_SCORES when the game is actually live or final
+        let st = String(g.status || '').toLowerCase();
+        // Scores in DB but status stuck on scheduled → treat as final once kickoff passed
+        if (st !== 'live' && st !== 'final' && g.away_score != null && g.home_score != null && isLocked(g)) {
+          st = 'final';
+          g.status = 'final';
+        }
         if ((st === 'final' || st === 'live') && g.away_score != null && g.home_score != null) {
           LIVE_SCORES[g.id] = {
             away: g.away_score,
@@ -2779,20 +2795,37 @@
       if (!visibleGames.length) {
         html += `<p style="color:var(--muted);font-size:0.9rem;margin:0;">No games have started yet — picks stay hidden until kickoff.</p>`;
       } else {
-        html += `<table><thead><tr><th>Game</th><th>Pick</th><th>Line</th>${isSelf ? '<th></th>' : ''}</tr></thead><tbody>`;
+        html += `<table><thead><tr>
+          <th>Game</th><th>Score</th><th>Pick</th><th>Line</th><th>Result</th>
+        </tr></thead><tbody>`;
         visibleGames.forEach(g => {
           const locked = isLocked(g);
           const sel = picks[g.id];
           const team = sel === 'away' ? g.away : sel === 'home' ? g.home : '—';
           const line = sel === 'away' ? formatOdds(-g.odds) : sel === 'home' ? formatOdds(g.odds) : '';
-          const lockCell = isSelf
-            ? `<td style="text-align:center;color:var(--muted);">${locked ? '' : '🔒'}</td>`
-            : '';
+          const complete = gameIsComplete(g);
+          const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
+          const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
+          const scoreText = (awaySc != null && homeSc != null)
+            ? `${awaySc}–${homeSc}`
+            : (locked ? '—' : '🔒');
+          let resultHtml = '—';
+          if (sel && complete) {
+            const ok = coveredSpread(sel, g.odds, awaySc, homeSc);
+            if (ok === true) {
+              resultHtml = `<span style="color:var(--success);font-weight:800;">✓</span>`;
+            } else if (ok === false) {
+              resultHtml = `<span style="color:var(--danger);font-weight:800;">✗</span>`;
+            }
+          } else if (!locked) {
+            resultHtml = '🔒';
+          }
           html += `<tr>
             <td>${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</td>
+            <td style="font-variant-numeric:tabular-nums;white-space:nowrap;">${scoreText}</td>
             <td><strong>${escapeHtml(team)}</strong></td>
             <td style="color:var(--accent);">${line}</td>
-            ${lockCell}
+            <td style="text-align:center;font-size:1.1rem;">${resultHtml}</td>
           </tr>`;
         });
         html += `</tbody></table>`;
@@ -2848,11 +2881,12 @@
     /** Only completed (final) games count toward standings W/L */
     function gameIsComplete(g) {
       if (!g) return false;
-      const st = String(g.status || '').toLowerCase();
+      const st = String(g.status || LIVE_SCORES[g.id]?.status || '').toLowerCase();
       if (st === 'final') return true;
+      const away = LIVE_SCORES[g.id]?.away ?? g.away_score;
+      const home = LIVE_SCORES[g.id]?.home ?? g.home_score;
       // Require real scores AND the game must have started (kickoff passed)
-      if (g.away_score != null && g.home_score != null && isLocked(g)) {
-        // Treat as complete if locked with scores (covers delayed status updates)
+      if (away != null && home != null && isLocked(g) && st !== 'live' && st !== 'in_progress') {
         return true;
       }
       return false;
@@ -2861,7 +2895,9 @@
     /** Cover result only once the game is complete; otherwise pending */
     function coverResultForStandings(selection, g) {
       if (!gameIsComplete(g)) return null;
-      return coveredSpread(selection, g.odds, g.away_score, g.home_score);
+      const away = LIVE_SCORES[g.id]?.away ?? g.away_score;
+      const home = LIVE_SCORES[g.id]?.home ?? g.home_score;
+      return coveredSpread(selection, g.odds, away, home);
     }
 
     let standingsMode = 'week';
@@ -4026,8 +4062,8 @@
       let w = 0, l = 0, p = 0;
       games.forEach(g => {
         const sel = myPicks[g.id];
-        if (!sel) return;
-        const result = coveredSpread(sel, g.odds, g.away_score, g.home_score);
+        if (!sel) { p++; return; }
+        const result = coverResultForStandings(sel, g);
         if (result === true) w++;
         else if (result === false) l++;
         else p++;
@@ -4109,22 +4145,32 @@
         // TEMP NFL test uses NFL scoreboard; college uses CFB
         const isNfl = !!nflTestMode;
         const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
-        let dates = isNfl ? '20260806-20260816' : '20260829-20260905';
+        const windows = new Set();
+        if (isNfl) {
+          windows.add('20260806-20260820');
+        } else {
+          windows.add('20260829-20260914');
+        }
         if (ds.length) {
           const lo = ds[0], hi = ds[ds.length - 1];
-          // Pad NFL window a day on each side so late finishes / timezone edges still match
-          if (isNfl && lo === hi) {
-            const d = new Date(lo.slice(0,4) + '-' + lo.slice(4,6) + '-' + lo.slice(6,8) + 'T12:00:00Z');
-            const prev = new Date(d.getTime() - 86400000);
-            const next = new Date(d.getTime() + 86400000);
-            const fmt = x => x.toISOString().slice(0,10).replace(/-/g,'');
-            dates = `${fmt(prev)}-${fmt(next)}`;
-          } else {
-            dates = lo === hi ? lo : `${lo}-${hi}`;
+          windows.add(lo === hi ? lo : `${lo}-${hi}`);
+          // Also fetch each distinct day — ESPN is more reliable per-day for preseason
+          ds.forEach(d => windows.add(d));
+        }
+        const events = [];
+        const seenEv = new Set();
+        for (const dates of windows) {
+          try {
+            const data = await fetchEspnScoreboard(dates, { sport: isNfl ? 'nfl' : 'college-football' });
+            (data.events || []).forEach(ev => {
+              if (ev.id && seenEv.has(ev.id)) return;
+              if (ev.id) seenEv.add(ev.id);
+              events.push(ev);
+            });
+          } catch (e) {
+            console.warn('ESPN window failed', dates, e);
           }
         }
-        const data = await fetchEspnScoreboard(dates, { sport: isNfl ? 'nfl' : 'college-football' });
-        const events = data.events || [];
 
         const espnGames = [];
         events.forEach(ev => {
@@ -4227,13 +4273,17 @@
 
           // Write scores to Supabase (shared standings). Do NOT abort the whole
           // refresh if RLS blocks a write — still apply scores in the UI.
+          let statusForDb = newStatus;
+          if (statusForDb !== 'live' && awayScore != null && homeScore != null && isLocked(g)) {
+            statusForDb = 'final';
+          }
           if (g.id && !String(g.id).startsWith('nfl-')) {
             const { error } = await sb
               .from('games')
               .update({
                 away_score: awayScore,
                 home_score: homeScore,
-                status: newStatus
+                status: statusForDb
               })
               .eq('id', g.id);
             if (error) {
@@ -4242,17 +4292,28 @@
             }
           }
 
+          // Prefer "final" when ESPN says so; if scores exist and game is locked and not live, force final
+          let statusToStore = newStatus;
+          if (statusToStore !== 'live' && awayScore != null && homeScore != null && isLocked(g)) {
+            statusToStore = 'final';
+          }
           g.away_score = awayScore;
           g.home_score = homeScore;
-          g.status = newStatus;
-          if ((newStatus === 'final' || newStatus === 'live') && awayScore != null && homeScore != null) {
+          g.status = statusToStore;
+          if ((statusToStore === 'final' || statusToStore === 'live') && awayScore != null && homeScore != null) {
             LIVE_SCORES[g.id] = {
               away: awayScore,
               home: homeScore,
-              status: newStatus === 'final' ? 'FINAL' : (match.detail || 'LIVE')
+              status: statusToStore === 'final' ? 'FINAL' : (match.detail || 'LIVE')
             };
           } else {
             delete LIVE_SCORES[g.id];
+          }
+          // Re-write status=final to DB if we coerced it
+          if (g.id && !String(g.id).startsWith('nfl-') && statusToStore !== newStatus) {
+            try {
+              await sb.from('games').update({ status: statusToStore }).eq('id', g.id);
+            } catch (_) {}
           }
           updated++;
         }
