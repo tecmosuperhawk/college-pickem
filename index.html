@@ -908,6 +908,21 @@
           <span class="error hidden" id="admin-override-err"></span>
         </div>
       </div>
+
+      <div class="card" style="margin-top:1rem;">
+        <strong>Members &amp; payments</strong>
+        <p style="font-size:0.8rem;color:var(--muted);margin:0.35rem 0 0.75rem;">
+          Everyone with an account. Fill in real name and payment tracking. Email is stored when each person logs in (run the SQL setup once if columns are missing).
+        </p>
+        <div id="admin-members-list" style="overflow-x:auto;">
+          <p class="subtitle">Loading members…</p>
+        </div>
+        <div style="margin-top:0.75rem;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;">
+          <button class="btn btn-sm" id="admin-members-save">Save member info</button>
+          <span class="success-msg hidden" id="admin-members-msg">Saved.</span>
+          <span class="error hidden" id="admin-members-err"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1841,7 +1856,7 @@
           return;
         }
         if (data.user) {
-          await sb.from('profiles').update({ display_name: name }).eq('id', data.user.id);
+          await sb.from('profiles').update({ display_name: name, email }).eq('id', data.user.id);
           const { data: profile } = await sb
             .from('profiles')
             .select('display_name, is_admin')
@@ -1895,6 +1910,10 @@
           .select('display_name, is_admin')
           .eq('id', data.user.id)
           .maybeSingle();
+        // Keep email on profile so admin member roster can show it
+        try {
+          await sb.from('profiles').update({ email }).eq('id', data.user.id);
+        } catch (_) {}
         await setLoggedIn({
           id: data.user.id,
           name: profile?.display_name || email.split('@')[0],
@@ -3678,6 +3697,118 @@
       }
     }
 
+    let adminMembersCache = [];
+
+    async function loadAdminMembers() {
+      const box = document.getElementById('admin-members-list');
+      if (!box || !currentUser?.isAdmin) return;
+      box.innerHTML = '<p class="subtitle">Loading members…</p>';
+      try {
+        const { data, error } = await sb
+          .from('profiles')
+          .select('id, display_name, email, full_name, paid, payment_method, is_admin')
+          .order('display_name');
+        if (error) throw error;
+        adminMembersCache = data || [];
+        if (!adminMembersCache.length) {
+          box.innerHTML = '<p class="subtitle">No accounts found.</p>';
+          return;
+        }
+        let html = `<table style="width:100%;min-width:640px;">
+          <thead>
+            <tr>
+              <th>Screen name</th>
+              <th>Email</th>
+              <th>Full name</th>
+              <th>Paid?</th>
+              <th>Payment</th>
+            </tr>
+          </thead>
+          <tbody>`;
+        adminMembersCache.forEach((m, i) => {
+          const paid = !!m.paid;
+          const method = m.payment_method || '';
+          html += `<tr data-member-i="${i}">
+            <td>
+              <strong>${escapeHtml(m.display_name || '—')}</strong>
+              ${m.is_admin ? ' <span style="font-size:0.75rem;color:var(--muted);">(admin)</span>' : ''}
+            </td>
+            <td style="font-size:0.85rem;word-break:break-all;">${escapeHtml(m.email || '—')}</td>
+            <td>
+              <input type="text" data-member-field="full_name" data-member-id="${m.id}"
+                value="${escapeHtml(m.full_name || '')}" placeholder="Legal / real name"
+                style="width:100%;min-width:8rem;">
+            </td>
+            <td style="text-align:center;">
+              <input type="checkbox" data-member-field="paid" data-member-id="${m.id}" ${paid ? 'checked' : ''}
+                title="Has paid">
+            </td>
+            <td>
+              <select data-member-field="payment_method" data-member-id="${m.id}" style="min-width:6.5rem;">
+                <option value="" ${!method ? 'selected' : ''}>—</option>
+                <option value="PayPal" ${method === 'PayPal' ? 'selected' : ''}>PayPal</option>
+                <option value="Venmo" ${method === 'Venmo' ? 'selected' : ''}>Venmo</option>
+                <option value="Cash" ${method === 'Cash' ? 'selected' : ''}>Cash</option>
+                <option value="Other" ${method === 'Other' ? 'selected' : ''}>Other</option>
+              </select>
+            </td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        box.innerHTML = html;
+      } catch (e) {
+        console.error('loadAdminMembers', e);
+        const msg = String(e.message || e);
+        const hint = /full_name|payment_method|column|does not exist/i.test(msg)
+          ? ' Run the Members SQL in Supabase (see Commish notes / setup), then refresh.'
+          : '';
+        box.innerHTML = `<p class="subtitle" style="color:var(--danger);">Could not load members: ${escapeHtml(msg)}.${hint}</p>`;
+      }
+    }
+
+    async function saveAdminMembers() {
+      const msg = document.getElementById('admin-members-msg');
+      const err = document.getElementById('admin-members-err');
+      if (msg) msg.classList.add('hidden');
+      if (err) { err.classList.add('hidden'); err.textContent = ''; }
+      if (!currentUser?.isAdmin) return;
+
+      const box = document.getElementById('admin-members-list');
+      if (!box) return;
+      const byId = {};
+      box.querySelectorAll('[data-member-id]').forEach(el => {
+        const id = el.dataset.memberId;
+        if (!byId[id]) byId[id] = { id };
+        const field = el.dataset.memberField;
+        if (field === 'paid') byId[id].paid = !!el.checked;
+        else if (field === 'full_name') byId[id].full_name = el.value.trim() || null;
+        else if (field === 'payment_method') byId[id].payment_method = el.value || null;
+      });
+
+      const rows = Object.values(byId);
+      let failed = 0;
+      for (const row of rows) {
+        const { error } = await sb.from('profiles').update({
+          full_name: row.full_name ?? null,
+          paid: !!row.paid,
+          payment_method: row.payment_method || null
+        }).eq('id', row.id);
+        if (error) {
+          failed++;
+          console.warn('member update failed', row.id, error);
+          if (err) {
+            err.textContent = error.message || String(error);
+            err.classList.remove('hidden');
+          }
+        }
+      }
+      if (!failed && msg) {
+        msg.classList.remove('hidden');
+        setTimeout(() => msg.classList.add('hidden'), 2500);
+      }
+      await loadAdminMembers();
+    }
+
     function renderAdminOverrideGames() {
       const gamesBox = document.getElementById('admin-override-games');
       const starSel = document.getElementById('admin-override-star');
@@ -3804,6 +3935,7 @@
         return;
       }
       loadAdminOverrideUsers();
+      loadAdminMembers();
       const list = document.getElementById('admin-games-list');
       if (!list) return;
       list.innerHTML = `
@@ -3958,6 +4090,7 @@
 
     document.getElementById('admin-override-user').onchange = () => loadAdminOverrideSheet();
     document.getElementById('admin-override-save').onclick = () => saveAdminOverride();
+    document.getElementById('admin-members-save').onclick = () => saveAdminMembers();
 
     // ---- Automated scores from ESPN public scoreboard ----
     function normalizeTeamName(name) {
@@ -4824,6 +4957,9 @@
               .maybeSingle();
             if (profile?.display_name) name = profile.display_name;
             isAdmin = !!profile?.is_admin;
+            if (session.user.email) {
+              await sb.from('profiles').update({ email: session.user.email }).eq('id', session.user.id);
+            }
           } catch (e) {
             console.error('profile fetch error', e);
           }
