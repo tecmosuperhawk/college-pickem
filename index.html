@@ -1498,12 +1498,23 @@
       }
     }
 
-    /** True when we have real scores and the game has started (treat as done for UI) */
+    /** True when we have real scores worth showing (not placeholder 0-0 on a non-started/final game) */
     function hasDisplayableScores(g) {
       const score = LIVE_SCORES[g.id];
       const away = score?.away ?? g.away_score;
       const home = score?.home ?? g.home_score;
-      return away != null && home != null && !isNaN(Number(away)) && !isNaN(Number(home));
+      if (away == null || home == null || isNaN(Number(away)) || isNaN(Number(home))) return false;
+      const st = String(g.status || score?.status || '').toLowerCase();
+      // ESPN often returns 0-0 for scheduled games — ignore that junk
+      if (Number(away) === 0 && Number(home) === 0 && st !== 'final' && st !== 'live') {
+        return false;
+      }
+      return true;
+    }
+
+    function isNflWeekMeta(w) {
+      if (!w) return false;
+      return w.week_number === -1 || /nfl/i.test(String(w.label || ''));
     }
 
     /** Open / Locked / Live / Final badge for a game card */
@@ -1665,6 +1676,12 @@
       Object.keys(LIVE_SCORES).forEach(k => delete LIVE_SCORES[k]);
       games.forEach(g => {
         let st = String(g.status || '').toLowerCase();
+        // Strip bogus 0-0 placeholders left in DB for games that never went final
+        if (st !== 'final' && st !== 'live' &&
+            Number(g.away_score) === 0 && Number(g.home_score) === 0) {
+          g.away_score = null;
+          g.home_score = null;
+        }
         // Scores in DB but status stuck on scheduled → treat as final once kickoff passed
         if (st !== 'live' && st !== 'final' && g.away_score != null && g.home_score != null && isLocked(g)) {
           st = 'final';
@@ -4142,11 +4159,20 @@
         btn.textContent = 'Updating…';
       }
       try {
-        // TEMP NFL test uses NFL scoreboard; college uses CFB
-        const isNfl = !!nflTestMode;
+        // Use NFL scoreboard when in NFL test mode OR the active week is the NFL Test week
+        const weekMeta = currentWeekMeta();
+        const isNfl = !!nflTestMode || isNflWeekMeta(weekMeta);
+        // Detect NFL from roster team names if week meta is missing/wrong
+        const looksNfl = games.some(g =>
+          /lions|bengals|packers|steelers|patriots|colts|raiders|cardinals|chargers|texans|titans|49ers|jets|buccaneers|commanders|dolphins|bills|browns|bears|panthers|broncos|falcons|chiefs|eagles|cowboys|giants|rams|seahawks|saints|vikings|jaguars|ravens|miami dolphins/i.test(
+            `${g.away || ''} ${g.home || ''}`
+          )
+        );
+        const useNfl = isNfl || looksNfl;
+
         const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
         const windows = new Set();
-        if (isNfl) {
+        if (useNfl) {
           windows.add('20260806-20260820');
         } else {
           windows.add('20260829-20260914');
@@ -4157,20 +4183,31 @@
           // Also fetch each distinct day — ESPN is more reliable per-day for preseason
           ds.forEach(d => windows.add(d));
         }
+        // Always include kickoff dates from games
+        games.forEach(g => {
+          if (g.kickoff) {
+            const k = String(g.kickoff).slice(0, 10).replace(/-/g, '');
+            if (/^\d{8}$/.test(k)) windows.add(k);
+          }
+        });
+
         const events = [];
         const seenEv = new Set();
+        let fetchErrors = 0;
         for (const dates of windows) {
           try {
-            const data = await fetchEspnScoreboard(dates, { sport: isNfl ? 'nfl' : 'college-football' });
+            const data = await fetchEspnScoreboard(dates, { sport: useNfl ? 'nfl' : 'college-football' });
             (data.events || []).forEach(ev => {
               if (ev.id && seenEv.has(ev.id)) return;
               if (ev.id) seenEv.add(ev.id);
               events.push(ev);
             });
           } catch (e) {
+            fetchErrors++;
             console.warn('ESPN window failed', dates, e);
           }
         }
+        console.log(`[scores] sport=${useNfl ? 'nfl' : 'cfb'} windows=${[...windows].join(',')} events=${events.length} slate=${games.length}`);
 
         const espnGames = [];
         events.forEach(ev => {
@@ -4209,16 +4246,23 @@
             }
           }
 
-          const awayScoreRaw = away.score;
-          const homeScoreRaw = home.score;
-          const awayScore = awayScoreRaw != null && awayScoreRaw !== '' ? parseInt(awayScoreRaw, 10) : null;
-          const homeScore = homeScoreRaw != null && homeScoreRaw !== '' ? parseInt(homeScoreRaw, 10) : null;
+          let awayScoreRaw = away.score;
+          let homeScoreRaw = home.score;
+          let awayScore = awayScoreRaw != null && awayScoreRaw !== '' ? parseInt(awayScoreRaw, 10) : null;
+          let homeScore = homeScoreRaw != null && homeScoreRaw !== '' ? parseInt(homeScoreRaw, 10) : null;
+          if (isNaN(awayScore)) awayScore = null;
+          if (isNaN(homeScore)) homeScore = null;
+          // Drop placeholder 0-0 for games that haven't started
+          if (status === 'scheduled' && awayScore === 0 && homeScore === 0) {
+            awayScore = null;
+            homeScore = null;
+          }
 
           espnGames.push({
             awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
             homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
-            awayScore: isNaN(awayScore) ? null : awayScore,
-            homeScore: isNaN(homeScore) ? null : homeScore,
+            awayScore,
+            homeScore,
             status,
             detail: statusType.detail || statusType.shortDetail || '',
             homeLine
@@ -4323,15 +4367,21 @@
           if (document.getElementById('view-picks')?.classList.contains('active')) renderPicksEntry();
           if (document.getElementById('view-standings')?.classList.contains('active')) renderStandings('week');
           if (document.getElementById('view-others')?.classList.contains('active')) renderOthers();
-          if (isNfl) updateNflTestRecordBanner();
+          if (useNfl) updateNflTestRecordBanner();
         }
 
         if (!silent) {
-          let msg = `ESPN scores: ${matched} game(s) matched, ${updated} updated.`;
+          let msg = `ESPN scores (${useNfl ? 'NFL' : 'CFB'}): ${matched} matched, ${updated} updated.` +
+            `\nEvents from ESPN: ${events.length}. Slate games: ${games.length}.`;
+          if (matched === 0 && games.length) {
+            msg += `\n\nNo matches. First slate game: ${(games[0].away || '?')} @ ${(games[0].home || '?')}.` +
+              (espnGames[0] ? `\nSample ESPN: ${espnGames[0].awayName} @ ${espnGames[0].homeName}.` : '\nNo ESPN events in date window.');
+            if (fetchErrors) msg += `\n${fetchErrors} ESPN fetch error(s) — check browser console.`;
+          }
           if (dbErrors) msg += `\n\nNote: ${dbErrors} could not be saved to the database (permissions). Scores still show in this session.`;
           alert(msg);
         } else if (updated > 0) {
-          console.log(`[scores] ${updated} game(s) updated from ESPN${isNfl ? ' (NFL test)' : ''}${dbErrors ? ` (${dbErrors} DB write errors)` : ''}`);
+          console.log(`[scores] ${updated} game(s) updated from ESPN${useNfl ? ' (NFL)' : ''}${dbErrors ? ` (${dbErrors} DB write errors)` : ''}`);
         }
         return { matched, updated, dbErrors };
       } catch (e) {
