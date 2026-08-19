@@ -276,14 +276,60 @@
     .team.selected { border-color: var(--accent); background: var(--pick-bg); }
     .team.away.selected { border-color: var(--away); }
     .team.home.selected { border-color: var(--home); }
-    /* After final: green = cover, red = miss (overrides side color) */
+    /* Colorblind-friendly results: icon + text badge, not color alone */
     .team.selected.correct {
-      border-color: var(--success) !important;
-      background: rgba(34, 197, 94, 0.18) !important;
+      border-color: #111827 !important;
+      border-style: solid !important;
+      border-width: 3px !important;
+      background: repeating-linear-gradient(
+        -45deg,
+        rgba(34, 197, 94, 0.2),
+        rgba(34, 197, 94, 0.2) 6px,
+        rgba(34, 197, 94, 0.05) 6px,
+        rgba(34, 197, 94, 0.05) 12px
+      ) !important;
     }
     .team.selected.incorrect {
-      border-color: var(--danger) !important;
-      background: rgba(239, 68, 68, 0.14) !important;
+      border-color: #111827 !important;
+      border-style: dashed !important;
+      border-width: 3px !important;
+      background: repeating-linear-gradient(
+        45deg,
+        rgba(239, 68, 68, 0.18),
+        rgba(239, 68, 68, 0.18) 6px,
+        rgba(239, 68, 68, 0.04) 6px,
+        rgba(239, 68, 68, 0.04) 12px
+      ) !important;
+    }
+    .pick-result-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      margin-left: 0.35rem;
+      flex-shrink: 0;
+      border: 1px solid currentColor;
+    }
+    .pick-result-badge.correct {
+      color: #14532d;
+      background: #bbf7d0;
+    }
+    .pick-result-badge.incorrect {
+      color: #7f1d1d;
+      background: #fecaca;
+    }
+    [data-theme="dark"] .pick-result-badge.correct {
+      color: #bbf7d0;
+      background: #14532d;
+    }
+    [data-theme="dark"] .pick-result-badge.incorrect {
+      color: #fecaca;
+      background: #7f1d1d;
     }
     .team.disabled { cursor: default; opacity: 0.9; }
     .team-name { font-weight: 700; font-size: 1rem; }
@@ -2327,12 +2373,20 @@
       games.forEach(g => {
         const locked = isLocked(g);
         const sel = myPicks[g.id] || null;
-        // Green/red only after the game is final (or complete with scores)
+        // Result only after the game is final (or complete with real scores)
         let resultClass = '';
-        if (sel && gameIsComplete(g)) {
-          const covered = coveredSpread(sel, g.odds, g.away_score, g.home_score);
-          if (covered === true) resultClass = 'correct';
-          else if (covered === false) resultClass = 'incorrect';
+        let resultBadge = '';
+        if (sel && gameIsComplete(g) && hasDisplayableScores(g)) {
+          const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
+          const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
+          const covered = coveredSpread(sel, g.odds, awaySc, homeSc);
+          if (covered === true) {
+            resultClass = 'correct';
+            resultBadge = `<span class="pick-result-badge correct" title="Covered the spread">✓ Correct</span>`;
+          } else if (covered === false) {
+            resultClass = 'incorrect';
+            resultBadge = `<span class="pick-result-badge incorrect" title="Did not cover">✗ Wrong</span>`;
+          }
         }
         const card = document.createElement('div');
         card.className = 'game-card' + (g.isTiebreaker ? ' tiebreaker-game' : '') + (locked ? ' locked' : '');
@@ -2349,6 +2403,7 @@
             <div class="team away ${sel==='away'?'selected':''} ${resultClass && sel==='away'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
               <span class="marker">•</span>
               <span class="team-name">${g.away}</span>
+              ${sel==='away' ? resultBadge : ''}
               ${displayScoreForTeam(g, 'away')}
               <span class="team-line">${formatOdds(-g.odds)}</span>
             </div>
@@ -2356,6 +2411,7 @@
             <div class="team home ${sel==='home'?'selected':''} ${resultClass && sel==='home'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
               <span class="marker">•</span>
               <span class="team-name">${g.home}</span>
+              ${sel==='home' ? resultBadge : ''}
               ${displayScoreForTeam(g, 'home')}
               <span class="team-line">${formatOdds(g.odds)}</span>
             </div>
@@ -2813,39 +2869,50 @@
         html += `<p style="color:var(--muted);font-size:0.9rem;margin:0;">No games have started yet — picks stay hidden until kickoff.</p>`;
       } else {
         html += `<table><thead><tr>
-          <th>Game</th><th>Score</th><th>Pick</th><th>Line</th><th>Result</th>
+          <th>Game</th><th>Pick</th><th>Line</th><th>Score</th><th style="text-align:center;">Result</th>
         </tr></thead><tbody>`;
+        let correctCount = 0;
+        let gradedCount = 0;
         visibleGames.forEach(g => {
           const locked = isLocked(g);
           const sel = picks[g.id];
           const team = sel === 'away' ? g.away : sel === 'home' ? g.home : '—';
           const line = sel === 'away' ? formatOdds(-g.odds) : sel === 'home' ? formatOdds(g.odds) : '';
-          const complete = gameIsComplete(g);
+          const complete = gameIsComplete(g) && hasDisplayableScores(g);
           const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
           const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
-          const scoreText = (awaySc != null && homeSc != null)
+          const scoreText = hasDisplayableScores(g)
             ? `${awaySc}–${homeSc}`
             : (locked ? '—' : '🔒');
           let resultHtml = '—';
           if (sel && complete) {
             const ok = coveredSpread(sel, g.odds, awaySc, homeSc);
+            gradedCount++;
             if (ok === true) {
-              resultHtml = `<span style="color:var(--success);font-weight:800;">✓</span>`;
+              correctCount++;
+              resultHtml = `<span style="font-weight:800;" title="Correct">✓</span>`;
             } else if (ok === false) {
-              resultHtml = `<span style="color:var(--danger);font-weight:800;">✗</span>`;
+              resultHtml = `<span style="font-weight:800;" title="Wrong">✗</span>`;
             }
           } else if (!locked) {
             resultHtml = '🔒';
           }
           html += `<tr>
             <td>${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</td>
-            <td style="font-variant-numeric:tabular-nums;white-space:nowrap;">${scoreText}</td>
             <td><strong>${escapeHtml(team)}</strong></td>
             <td style="color:var(--accent);">${line}</td>
-            <td style="text-align:center;font-size:1.1rem;">${resultHtml}</td>
+            <td style="font-variant-numeric:tabular-nums;white-space:nowrap;">${scoreText}</td>
+            <td style="text-align:center;font-size:1.15rem;">${resultHtml}</td>
           </tr>`;
         });
-        html += `</tbody></table>`;
+        html += `</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="text-align:right;font-weight:700;padding-top:0.75rem;">Total Correct:</td>
+              <td style="text-align:center;font-weight:800;font-size:1.15rem;padding-top:0.75rem;">${correctCount}${gradedCount ? `<span style="font-weight:600;color:var(--muted);font-size:0.85rem;"> / ${gradedCount}</span>` : ''}</td>
+            </tr>
+          </tfoot>
+        </table>`;
       }
 
       const tbGame = games.find(g => g.isTiebreaker);
