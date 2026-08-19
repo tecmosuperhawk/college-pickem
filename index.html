@@ -2423,6 +2423,17 @@
               <input type="number" id="total-points" min="0" max="150" step="1" placeholder="e.g. 52"
                      value="${myTotal !== null ? myTotal : ''}" ${locked ? 'disabled' : ''}>
               <span class="total-line">Line: <strong>O/U ${g.totalLine != null ? g.totalLine : '—'}</strong></span>
+              ${(() => {
+                if (!hasDisplayableScores(g)) return '';
+                const a = LIVE_SCORES[g.id]?.away ?? g.away_score;
+                const h = LIVE_SCORES[g.id]?.home ?? g.home_score;
+                const actual = Number(a) + Number(h);
+                const pred = (myTotal !== null && !isNaN(myTotal)) ? Number(myTotal) : null;
+                const diff = pred != null ? pred - actual : null;
+                const diffTxt = diff == null ? '' :
+                  ` · Your guess was ${diff === 0 ? 'exact' : (diff > 0 ? `+${diff}` : String(diff))}`;
+                return `<span class="total-line" style="display:block;margin-top:0.35rem;">Actual total: <strong>${actual}</strong> (${a}+${h})${diffTxt}</span>`;
+              })()}
             </div>` : ''}
         `;
         container.appendChild(card);
@@ -2501,9 +2512,21 @@
       if (tbHint) {
         if (tbGame && tbLocked) {
           const matchup = `${tbGame.away} @ ${tbGame.home}`;
-          tbHint.textContent = myTotal !== null && !isNaN(myTotal)
+          let msg = myTotal !== null && !isNaN(myTotal)
             ? `Tiebreaker locked — ${matchup} has started. Your total is saved.`
             : `Tiebreaker locked — ${matchup} has started. No total was entered.`;
+          if (hasDisplayableScores(tbGame)) {
+            const a = LIVE_SCORES[tbGame.id]?.away ?? tbGame.away_score;
+            const h = LIVE_SCORES[tbGame.id]?.home ?? tbGame.home_score;
+            const actual = Number(a) + Number(h);
+            const pred = (myTotal !== null && !isNaN(myTotal)) ? Number(myTotal) : null;
+            const diff = pred != null ? pred - actual : null;
+            msg += ` Actual total: ${actual} (${a}+${h})`;
+            if (diff != null) {
+              msg += diff === 0 ? ' — exact!' : ` · off by ${Math.abs(diff)} (${diff > 0 ? '+' : ''}${diff})`;
+            }
+          }
+          tbHint.textContent = msg;
           tbHint.classList.remove('hidden');
         } else {
           tbHint.classList.add('hidden');
@@ -2873,10 +2896,19 @@
         </tr></thead><tbody>`;
         let correctCount = 0;
         let gradedCount = 0;
+        let usedDefault = false;
         visibleGames.forEach(g => {
           const locked = isLocked(g);
-          const sel = picks[g.id];
+          // Blank pick on a locked game → default to away (same rule as My Picks)
+          let sel = picks[g.id];
+          let isDefault = false;
+          if (!sel && locked) {
+            sel = 'away';
+            isDefault = true;
+            usedDefault = true;
+          }
           const team = sel === 'away' ? g.away : sel === 'home' ? g.home : '—';
+          const teamLabel = team === '—' ? '—' : (isDefault ? `${team}*` : team);
           const line = sel === 'away' ? formatOdds(-g.odds) : sel === 'home' ? formatOdds(g.odds) : '';
           const complete = gameIsComplete(g) && hasDisplayableScores(g);
           const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
@@ -2899,7 +2931,7 @@
           }
           html += `<tr>
             <td>${escapeHtml(g.away)} @ ${escapeHtml(g.home)}</td>
-            <td><strong>${escapeHtml(team)}</strong></td>
+            <td><strong>${escapeHtml(teamLabel)}</strong></td>
             <td style="color:var(--accent);">${line}</td>
             <td style="font-variant-numeric:tabular-nums;white-space:nowrap;">${scoreText}</td>
             <td style="text-align:center;font-size:1.15rem;">${resultHtml}</td>
@@ -2913,6 +2945,9 @@
             </tr>
           </tfoot>
         </table>`;
+        if (usedDefault) {
+          html += `<p style="font-size:0.8rem;color:var(--muted);margin:0.6rem 0 0;">* = default selection (away team) — no pick was submitted before lock.</p>`;
+        }
       }
 
       const tbGame = games.find(g => g.isTiebreaker);
@@ -2923,6 +2958,18 @@
             html += `<p style="margin-top:0.75rem;font-size:0.9rem;">Tiebreaker total: <strong>${player.totalGuess}</strong>${lock}</p>`;
           } else {
             html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">No tiebreaker total entered.</p>`;
+          }
+          if (hasDisplayableScores(tbGame)) {
+            const a = LIVE_SCORES[tbGame.id]?.away ?? tbGame.away_score;
+            const h = LIVE_SCORES[tbGame.id]?.home ?? tbGame.home_score;
+            const actual = Number(a) + Number(h);
+            const pred = player.totalGuess != null ? Number(player.totalGuess) : null;
+            let extra = `Actual total: <strong>${actual}</strong> (${a}+${h})`;
+            if (pred != null && !isNaN(pred)) {
+              const diff = pred - actual;
+              extra += diff === 0 ? ' — exact!' : ` · off by ${Math.abs(diff)}`;
+            }
+            html += `<p style="margin-top:0.25rem;font-size:0.9rem;">${extra}</p>`;
           }
         } else {
           html += `<p style="margin-top:0.75rem;font-size:0.85rem;color:var(--muted);">Tiebreaker total hidden until that game starts.</p>`;
@@ -3267,15 +3314,17 @@
             const picks = picksBySheet[sheet.id] || {};
             let wins = 0, losses = 0, starHit = 0;
 
-            Object.keys(picks).forEach(gid => {
-              const g = gameById[gid];
-              if (!g) return;
-              // Only completed games count as wins/losses
-              const result = coverResultForStandings(picks[gid], g);
+            // Grade every slate game; missing pick on a locked/complete game defaults to away
+            games.forEach(g => {
+              if (!g || !g.id) return;
+              let sel = picks[g.id];
+              if (!sel && isLocked(g)) sel = 'away';
+              if (!sel) return;
+              const result = coverResultForStandings(sel, g);
               if (result === true) {
                 wins++;
                 // 5★ tracked separately — does NOT add to weekly points / winner
-                if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
+                if (sheet.five_star_game_id === g.id && sheet.five_star_side === sel) {
                   starHit = 1;
                 }
               } else if (result === false) {
@@ -3384,19 +3433,18 @@
             if (!t) return;
             t.any = true;
             const picks = picksBySheet[sheet.id] || {};
-            Object.keys(picks).forEach(gid => {
-              const g = gameById[gid];
-              if (!g) return;
-              // Map DB row to shape gameIsComplete expects
-              const gShape = {
-                ...g,
-                kickoff: g.kickoff_at || g.kickoff
-              };
-              const result = coverResultForStandings(picks[gid], gShape);
+            // Grade all games on this sheet's week; blank locked picks default to away
+            const weekGames = (allGames || []).filter(g => g.week_id === sheet.week_id);
+            weekGames.forEach(g => {
+              const gShape = { ...g, kickoff: g.kickoff_at || g.kickoff };
+              let sel = picks[g.id];
+              if (!sel && isLocked(gShape)) sel = 'away';
+              if (!sel) return;
+              const result = coverResultForStandings(sel, gShape);
               if (result === true) {
                 t.wins++;
                 t.pts++;
-                if (sheet.five_star_game_id === gid && sheet.five_star_side === picks[gid]) {
+                if (sheet.five_star_game_id === g.id && sheet.five_star_side === sel) {
                   t.star++;
                 }
               } else if (result === false) {
@@ -3441,11 +3489,11 @@
             const scored = wSheets.map(sheet => {
               const picks = picksBySheet[sheet.id] || {};
               let wins = 0;
-              Object.keys(picks).forEach(gid => {
-                const g = gameById[gid];
-                if (!g || g.week_id !== w.id) return;
-                const gShape = { ...g, kickoff: g.kickoff_at || g.kickoff };
-                if (coverResultForStandings(picks[gid], gShape) === true) wins++;
+              wGames.forEach(gShape => {
+                let sel = picks[gShape.id];
+                if (!sel && isLocked(gShape)) sel = 'away';
+                if (!sel) return;
+                if (coverResultForStandings(sel, gShape) === true) wins++;
               });
               const tbGuess = sheet.total_points_guess;
               let tbDist = null;
