@@ -90,36 +90,54 @@
     .nav-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; color: var(--muted); }
     .container { max-width: 960px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
-    /* Mobile bottom tab bar */
+    /* Mobile bottom tab bar — sits above Safari chrome via visualViewport + safe-area */
     .bottom-nav {
       display: none;
       position: fixed;
       left: 0; right: 0; bottom: 0;
-      z-index: 60;
+      z-index: 1000;
       background: var(--card);
       border-top: 1px solid var(--border);
-      padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+      /* Extra bottom padding: iOS Safari toolbar often sits on top of fixed footers */
+      padding: 0.25rem 0.15rem calc(0.55rem + env(safe-area-inset-bottom, 0px));
       justify-content: space-around;
       align-items: stretch;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.18);
+      -webkit-transform: translateZ(0);
+      transform: translateZ(0);
     }
     .bottom-nav button {
       flex: 1;
       background: transparent;
       border: none;
       color: var(--muted);
-      padding: 0.35rem 0.2rem;
+      /* Large hit target so one tap registers */
+      min-height: 52px;
+      padding: 0.45rem 0.15rem;
+      margin: 0;
       cursor: pointer;
-      font-size: 0.65rem;
+      font-size: 0.68rem;
+      font-weight: 600;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 0.15rem;
+      justify-content: center;
+      gap: 0.2rem;
+      -webkit-tap-highlight-color: rgba(59, 130, 246, 0.25);
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
     }
-    .bottom-nav button.active { color: var(--accent); font-weight: 700; }
-    .bottom-nav .bn-icon { font-size: 1.15rem; line-height: 1; }
-    .bottom-nav .bn-label { line-height: 1.1; }
+    .bottom-nav button:active {
+      color: var(--accent);
+      background: rgba(59, 130, 246, 0.12);
+      border-radius: 10px;
+    }
+    .bottom-nav button.active { color: var(--accent); font-weight: 800; }
+    .bottom-nav .bn-icon { font-size: 1.25rem; line-height: 1; pointer-events: none; }
+    .bottom-nav .bn-label { line-height: 1.1; pointer-events: none; }
     .more-sheet {
-      position: fixed; inset: 0; z-index: 70;
+      position: fixed; inset: 0; z-index: 1100;
       display: flex; align-items: flex-end; justify-content: center;
     }
     .more-sheet.hidden { display: none; }
@@ -133,7 +151,7 @@
       border-radius: 16px 16px 0 0;
       border: 1px solid var(--border);
       border-bottom: none;
-      padding: 0.5rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+      padding: 0.5rem 0.75rem calc(1rem + env(safe-area-inset-bottom, 0px));
       z-index: 1;
     }
     .more-sheet-handle {
@@ -160,9 +178,16 @@
       .nav-user #logout-btn { display: none; }
       .bottom-nav { display: flex; }
       .bottom-nav.hidden { display: none; }
-      .container { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+      /* Room for taller tab bar + Safari chrome */
+      .container {
+        padding-bottom: calc(6.25rem + env(safe-area-inset-bottom, 0px));
+      }
       .status-bar {
-        bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
+        position: sticky;
+        /* Keep Save bar above the bottom tab bar */
+        bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+        z-index: 30;
+        padding-bottom: 0.75rem;
       }
     }
     .hidden { display: none !important; }
@@ -1758,6 +1783,7 @@
         if (bottomNav) {
           if (user) bottomNav.classList.remove('hidden');
           else bottomNav.classList.add('hidden');
+          setTimeout(syncBottomNavToViewport, 0);
         }
         if (!user) closeMoreSheet();
         document.getElementById('user-display').textContent = user ? (user.name || user.email || '') : '';
@@ -1995,27 +2021,75 @@
       showView('auth');
     };
 
-    // Nav
+    // Lift fixed bottom nav above Safari's collapsing browser chrome
+    function syncBottomNavToViewport() {
+      const nav = document.getElementById('bottom-nav');
+      if (!nav || nav.classList.contains('hidden')) return;
+      if (!window.visualViewport) {
+        nav.style.bottom = '0px';
+        return;
+      }
+      const vv = window.visualViewport;
+      // Distance between layout viewport bottom and visual viewport bottom
+      const gap = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+      nav.style.bottom = gap + 'px';
+      // Keep sticky Save bar sitting just above the tab bar
+      const status = document.querySelector('.status-bar');
+      if (status && window.matchMedia('(max-width: 720px)').matches) {
+        const navH = nav.offsetHeight || 56;
+        status.style.bottom = (gap + navH) + 'px';
+      }
+    }
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', syncBottomNavToViewport);
+      window.visualViewport.addEventListener('scroll', syncBottomNavToViewport);
+    }
+    window.addEventListener('resize', syncBottomNavToViewport);
+    window.addEventListener('orientationchange', () => setTimeout(syncBottomNavToViewport, 150));
+
+    // Nav — touchend fires before delayed click on some mobile browsers
+    function bindNavTap(el, handler) {
+      if (!el) return;
+      let touched = false;
+      el.addEventListener('touchend', (e) => {
+        // Only primary finger; ignore multi-touch / scroll leftovers
+        if (e.changedTouches && e.changedTouches.length > 1) return;
+        touched = true;
+        e.preventDefault();
+        handler(e);
+      }, { passive: false });
+      el.addEventListener('click', (e) => {
+        if (touched) {
+          touched = false;
+          e.preventDefault();
+          return;
+        }
+        handler(e);
+      });
+    }
+
     document.querySelectorAll('#nav-links button').forEach(btn => {
-      btn.onclick = () => navigateToView(btn.dataset.view);
+      bindNavTap(btn, () => navigateToView(btn.dataset.view));
     });
     document.querySelectorAll('#bottom-nav button[data-view]').forEach(btn => {
-      btn.onclick = () => navigateToView(btn.dataset.view);
+      bindNavTap(btn, () => navigateToView(btn.dataset.view));
     });
-    document.getElementById('bottom-more-btn').onclick = () => openMoreSheet();
+    bindNavTap(document.getElementById('bottom-more-btn'), () => openMoreSheet());
     document.getElementById('more-sheet-backdrop').onclick = () => closeMoreSheet();
     document.getElementById('more-sheet-close').onclick = () => closeMoreSheet();
     document.querySelectorAll('#more-sheet [data-view]').forEach(btn => {
-      btn.onclick = () => navigateToView(btn.dataset.view);
+      bindNavTap(btn, () => navigateToView(btn.dataset.view));
     });
-    document.getElementById('more-theme-btn').onclick = () => {
+    bindNavTap(document.getElementById('more-theme-btn'), () => {
       document.getElementById('theme-toggle')?.click();
       closeMoreSheet();
-    };
-    document.getElementById('more-logout-btn').onclick = () => {
+    });
+    bindNavTap(document.getElementById('more-logout-btn'), () => {
       closeMoreSheet();
       document.getElementById('logout-btn')?.click();
-    };
+    });
+    // Position once after nav is visible
+    setTimeout(syncBottomNavToViewport, 0);
 
     window.addEventListener('beforeunload', (e) => {
       if (!picksDirty) return;
