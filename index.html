@@ -3772,6 +3772,57 @@
     }
 
     let adminMembersCache = [];
+    let adminMembersBaseline = {}; // id → last saved snapshot
+
+    function memberSnapshot(m) {
+      return {
+        full_name: (m.full_name || '').trim() || null,
+        paid: !!m.paid,
+        payment_method: m.payment_method || null
+      };
+    }
+
+    function membersChangedRows() {
+      // Prefer live form values so every edited row is included
+      const box = document.getElementById('admin-members-list');
+      const live = {};
+      if (box) {
+        box.querySelectorAll('[data-member-id]').forEach(el => {
+          const id = el.getAttribute('data-member-id');
+          if (!id) return;
+          if (!live[id]) live[id] = { id };
+          const field = el.getAttribute('data-member-field');
+          if (field === 'paid') live[id].paid = !!el.checked;
+          else if (field === 'full_name') live[id].full_name = (el.value || '').trim() || null;
+          else if (field === 'payment_method') live[id].payment_method = el.value || null;
+        });
+      }
+      // Fall back to in-memory cache for any missing fields
+      adminMembersCache.forEach(m => {
+        if (!live[m.id]) {
+          live[m.id] = { id: m.id, ...memberSnapshot(m) };
+        } else {
+          if (live[m.id].paid === undefined) live[m.id].paid = !!m.paid;
+          if (live[m.id].full_name === undefined) live[m.id].full_name = memberSnapshot(m).full_name;
+          if (live[m.id].payment_method === undefined) live[m.id].payment_method = m.payment_method || null;
+        }
+      });
+
+      return Object.values(live).filter(row => {
+        const base = adminMembersBaseline[row.id];
+        if (!base) return true;
+        return (
+          (row.full_name || null) !== (base.full_name || null) ||
+          !!row.paid !== !!base.paid ||
+          (row.payment_method || null) !== (base.payment_method || null)
+        );
+      }).map(row => ({
+        id: row.id,
+        full_name: row.full_name || null,
+        paid: !!row.paid,
+        payment_method: row.payment_method || null
+      }));
+    }
 
     async function loadAdminMembers() {
       const box = document.getElementById('admin-members-list');
@@ -3783,7 +3834,16 @@
           .select('id, display_name, email, full_name, paid, payment_method, is_admin')
           .order('display_name');
         if (error) throw error;
-        adminMembersCache = data || [];
+        adminMembersCache = (data || []).map(m => ({
+          ...m,
+          full_name: m.full_name || '',
+          paid: !!m.paid,
+          payment_method: m.payment_method || ''
+        }));
+        adminMembersBaseline = {};
+        adminMembersCache.forEach(m => {
+          adminMembersBaseline[m.id] = memberSnapshot(m);
+        });
         if (!adminMembersCache.length) {
           box.innerHTML = '<p class="subtitle">No accounts found.</p>';
           return;
@@ -3799,10 +3859,10 @@
             </tr>
           </thead>
           <tbody>`;
-        adminMembersCache.forEach((m, i) => {
+        adminMembersCache.forEach((m) => {
           const paid = !!m.paid;
           const method = m.payment_method || '';
-          html += `<tr data-member-i="${i}">
+          html += `<tr data-member-id="${m.id}">
             <td>
               <strong>${escapeHtml(m.display_name || '—')}</strong>
               ${m.is_admin ? ' <span style="font-size:0.75rem;color:var(--muted);">(admin)</span>' : ''}
@@ -3811,7 +3871,7 @@
             <td>
               <input type="text" data-member-field="full_name" data-member-id="${m.id}"
                 value="${escapeHtml(m.full_name || '')}" placeholder="Legal / real name"
-                style="width:100%;min-width:8rem;">
+                style="width:100%;min-width:8rem;" autocomplete="off">
             </td>
             <td style="text-align:center;">
               <input type="checkbox" data-member-field="paid" data-member-id="${m.id}" ${paid ? 'checked' : ''}
@@ -3830,6 +3890,21 @@
         });
         html += '</tbody></table>';
         box.innerHTML = html;
+
+        // Keep cache in sync as fields change (so multi-row edits aren't lost)
+        box.querySelectorAll('[data-member-id][data-member-field]').forEach(el => {
+          const apply = () => {
+            const id = el.getAttribute('data-member-id');
+            const field = el.getAttribute('data-member-field');
+            const m = adminMembersCache.find(x => x.id === id);
+            if (!m) return;
+            if (field === 'paid') m.paid = !!el.checked;
+            else if (field === 'full_name') m.full_name = el.value;
+            else if (field === 'payment_method') m.payment_method = el.value;
+          };
+          el.addEventListener('input', apply);
+          el.addEventListener('change', apply);
+        });
       } catch (e) {
         console.error('loadAdminMembers', e);
         const msg = String(e.message || e);
@@ -3843,43 +3918,57 @@
     async function saveAdminMembers() {
       const msg = document.getElementById('admin-members-msg');
       const err = document.getElementById('admin-members-err');
+      const btn = document.getElementById('admin-members-save');
       if (msg) msg.classList.add('hidden');
       if (err) { err.classList.add('hidden'); err.textContent = ''; }
       if (!currentUser?.isAdmin) return;
 
-      const box = document.getElementById('admin-members-list');
-      if (!box) return;
-      const byId = {};
-      box.querySelectorAll('[data-member-id]').forEach(el => {
-        const id = el.dataset.memberId;
-        if (!byId[id]) byId[id] = { id };
-        const field = el.dataset.memberField;
-        if (field === 'paid') byId[id].paid = !!el.checked;
-        else if (field === 'full_name') byId[id].full_name = el.value.trim() || null;
-        else if (field === 'payment_method') byId[id].payment_method = el.value || null;
-      });
-
-      const rows = Object.values(byId);
-      let failed = 0;
-      for (const row of rows) {
-        const { error } = await sb.from('profiles').update({
-          full_name: row.full_name ?? null,
-          paid: !!row.paid,
-          payment_method: row.payment_method || null
-        }).eq('id', row.id);
-        if (error) {
-          failed++;
-          console.warn('member update failed', row.id, error);
-          if (err) {
-            err.textContent = error.message || String(error);
-            err.classList.remove('hidden');
-          }
+      const rows = membersChangedRows();
+      if (!rows.length) {
+        if (msg) {
+          msg.textContent = 'No changes to save.';
+          msg.classList.remove('hidden');
+          setTimeout(() => msg.classList.add('hidden'), 2000);
         }
+        return;
       }
-      if (!failed && msg) {
+
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = `Saving ${rows.length}…`;
+      }
+
+      // Write every changed row (parallel). Collect successes/failures.
+      const results = await Promise.all(rows.map(async (row) => {
+        const { error } = await sb.from('profiles').update({
+          full_name: row.full_name,
+          paid: row.paid,
+          payment_method: row.payment_method
+        }).eq('id', row.id);
+        return { id: row.id, error };
+      }));
+
+      const failed = results.filter(r => r.error);
+      const okCount = results.length - failed.length;
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Save member info';
+      }
+
+      if (failed.length) {
+        console.warn('member update failures', failed);
+        if (err) {
+          err.textContent = `Saved ${okCount} of ${results.length}. Failed: ${failed.map(f => f.error.message || f.error).join('; ')}`;
+          err.classList.remove('hidden');
+        }
+      } else if (msg) {
+        msg.textContent = `Saved ${okCount} member${okCount === 1 ? '' : 's'}.`;
         msg.classList.remove('hidden');
         setTimeout(() => msg.classList.add('hidden'), 2500);
       }
+
+      // Refresh table from DB so UI matches what actually persisted
       await loadAdminMembers();
     }
 
