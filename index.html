@@ -203,6 +203,27 @@
         padding-bottom: calc(8.5rem + env(safe-area-inset-bottom, 0px));
       }
     }
+
+    /* Home Screen / standalone PWA: no Safari chrome — lock bars; don't chase visualViewport */
+    @media (max-width: 720px) and (display-mode: standalone) {
+      .bottom-nav {
+        bottom: 0 !important;
+        padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+      }
+      #view-picks.active .status-bar,
+      #view-picks .status-bar {
+        bottom: calc(3.85rem + env(safe-area-inset-bottom, 0px)) !important;
+      }
+      #view-picks {
+        padding-bottom: calc(9rem + env(safe-area-inset-bottom, 0px));
+      }
+    }
+    @media (max-width: 720px) and (display-mode: fullscreen) {
+      .bottom-nav { bottom: 0 !important; }
+      #view-picks .status-bar {
+        bottom: calc(3.85rem + env(safe-area-inset-bottom, 0px)) !important;
+      }
+    }
     .hidden { display: none !important; }
     h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
     .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.25rem; }
@@ -2034,35 +2055,59 @@
       showView('auth');
     };
 
-    // Lift fixed bottom nav + Save bar above Safari's collapsing browser chrome
+    /** True when launched from Home Screen (no Safari browser chrome). */
+    function isStandaloneApp() {
+      return (
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches ||
+        window.navigator.standalone === true
+      );
+    }
+
+    // In Safari browser only: lift bars above collapsing chrome.
+    // In Home Screen app: leave CSS fixed positions alone (visualViewport scroll was causing the bar to jump).
     function syncBottomNavToViewport() {
       const nav = document.getElementById('bottom-nav');
       const status = document.querySelector('#view-picks .status-bar');
       const mobile = window.matchMedia('(max-width: 720px)').matches;
 
+      // Standalone PWA — clear any inline offsets so CSS (with safe-area) owns position
+      if (isStandaloneApp()) {
+        if (nav) nav.style.bottom = '';
+        if (status) status.style.bottom = '';
+        return;
+      }
+
+      if (!mobile) {
+        if (nav) nav.style.bottom = '';
+        if (status) status.style.bottom = '';
+        return;
+      }
+
       if (!window.visualViewport) {
         if (nav) nav.style.bottom = '0px';
-        if (status && mobile) {
+        if (status) {
           const navH = (nav && !nav.classList.contains('hidden')) ? (nav.offsetHeight || 56) : 0;
           status.style.bottom = navH + 'px';
         }
         return;
       }
       const vv = window.visualViewport;
-      // Distance between layout viewport bottom and visual viewport bottom
       const gap = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
       if (nav && !nav.classList.contains('hidden')) {
         nav.style.bottom = gap + 'px';
       }
-      // Keep fixed Save bar glued just above the tab bar (does not scroll with content)
-      if (status && mobile) {
+      if (status) {
         const navH = (nav && !nav.classList.contains('hidden')) ? (nav.offsetHeight || 56) : 0;
         status.style.bottom = (gap + navH) + 'px';
       }
     }
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', syncBottomNavToViewport);
-      window.visualViewport.addEventListener('scroll', syncBottomNavToViewport);
+      // Only chase scroll in mobile Safari — not in the installed app
+      window.visualViewport.addEventListener('scroll', () => {
+        if (!isStandaloneApp()) syncBottomNavToViewport();
+      });
     }
     window.addEventListener('resize', syncBottomNavToViewport);
     window.addEventListener('orientationchange', () => setTimeout(syncBottomNavToViewport, 150));
