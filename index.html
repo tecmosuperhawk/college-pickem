@@ -178,16 +178,29 @@
       .nav-user #logout-btn { display: none; }
       .bottom-nav { display: flex; }
       .bottom-nav.hidden { display: none; }
-      /* Room for taller tab bar + Safari chrome */
+      /* Room for fixed Save bar + tab bar + Safari chrome */
       .container {
         padding-bottom: calc(6.25rem + env(safe-area-inset-bottom, 0px));
       }
-      .status-bar {
-        position: sticky;
-        /* Keep Save bar above the bottom tab bar */
-        bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
-        z-index: 30;
-        padding-bottom: 0.75rem;
+      /* Fixed so it never scrolls with the page — always sits above bottom tabs */
+      #view-picks.active .status-bar,
+      #view-picks .status-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(3.85rem + env(safe-area-inset-bottom, 0px));
+        z-index: 40;
+        margin: 0;
+        padding: 0.65rem 0.85rem 0.7rem;
+        background: var(--bg);
+        border-top: 1px solid var(--border);
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
+        -webkit-transform: translateZ(0);
+        transform: translateZ(0);
+      }
+      /* Extra space at end of picks so last cards clear the fixed Save bar */
+      #view-picks {
+        padding-bottom: calc(8.5rem + env(safe-area-inset-bottom, 0px));
       }
     }
     .hidden { display: none !important; }
@@ -413,7 +426,7 @@
       z-index: 20;
       background: var(--bg);
       border-top: 1px solid var(--border);
-      padding: 0.75rem 0 calc(0.85rem + env(safe-area-inset-bottom, 0px));
+      padding: 0.75rem 1rem calc(0.85rem + env(safe-area-inset-bottom, 0px));
       text-align: center;
       margin-top: 0.5rem;
     }
@@ -2021,22 +2034,29 @@
       showView('auth');
     };
 
-    // Lift fixed bottom nav above Safari's collapsing browser chrome
+    // Lift fixed bottom nav + Save bar above Safari's collapsing browser chrome
     function syncBottomNavToViewport() {
       const nav = document.getElementById('bottom-nav');
-      if (!nav || nav.classList.contains('hidden')) return;
+      const status = document.querySelector('#view-picks .status-bar');
+      const mobile = window.matchMedia('(max-width: 720px)').matches;
+
       if (!window.visualViewport) {
-        nav.style.bottom = '0px';
+        if (nav) nav.style.bottom = '0px';
+        if (status && mobile) {
+          const navH = (nav && !nav.classList.contains('hidden')) ? (nav.offsetHeight || 56) : 0;
+          status.style.bottom = navH + 'px';
+        }
         return;
       }
       const vv = window.visualViewport;
       // Distance between layout viewport bottom and visual viewport bottom
       const gap = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-      nav.style.bottom = gap + 'px';
-      // Keep sticky Save bar sitting just above the tab bar
-      const status = document.querySelector('.status-bar');
-      if (status && window.matchMedia('(max-width: 720px)').matches) {
-        const navH = nav.offsetHeight || 56;
+      if (nav && !nav.classList.contains('hidden')) {
+        nav.style.bottom = gap + 'px';
+      }
+      // Keep fixed Save bar glued just above the tab bar (does not scroll with content)
+      if (status && mobile) {
+        const navH = (nav && !nav.classList.contains('hidden')) ? (nav.offsetHeight || 56) : 0;
         status.style.bottom = (gap + navH) + 'px';
       }
     }
@@ -4495,14 +4515,8 @@
           }
           const newStatus = match.status;
 
-          // Keep half-point lines; if ESPN publishes a whole number, nudge to .5
-          if (match.homeLine != null && !isNaN(match.homeLine)) {
-            let line = Number(match.homeLine);
-            if (Math.abs(line % 1) < 1e-9) line = line > 0 ? line + 0.5 : line - 0.5;
-            if (Math.abs(line % 1 - 0.5) < 1e-9 || Math.abs(line % 1 + 0.5) < 1e-9) {
-              g.odds = line;
-            }
-          }
+          // Odds are intentionally NOT updated here — only Admin → ↻ Odds (ESPN)
+          // may change lines. Score polling must leave spreads locked.
 
           const same =
             g.away_score === awayScore &&
