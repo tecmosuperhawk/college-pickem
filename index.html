@@ -751,6 +751,7 @@
       <button type="button" data-view="notes" class="more-sheet-item">📝 Commish Notes</button>
       <button type="button" data-view="admin" id="more-admin-btn" class="more-sheet-item hidden">⚙️ Admin</button>
       <button type="button" id="more-theme-btn" class="more-sheet-item">🌓 Toggle theme</button>
+      <button type="button" id="more-password-btn" class="more-sheet-item">🔑 Change password</button>
       <button type="button" id="more-logout-btn" class="more-sheet-item more-danger">Log out</button>
       <button type="button" id="more-sheet-close" class="more-sheet-item more-cancel">Cancel</button>
     </div>
@@ -778,6 +779,20 @@
           <button type="button" class="auth-link" id="forgot-password-link" style="display:block;width:100%;text-align:center;">Forgot password?</button>
           <p class="error hidden" id="login-error"></p>
           <p class="msg-ok hidden" id="login-ok"></p>
+        </div>
+        <div id="reset-password-form" class="hidden">
+          <p class="subtitle" style="margin-top:0;">Set a new password (6+ characters).</p>
+          <div class="form-row">
+            <label>New password</label>
+            <input type="password" id="reset-password-1" placeholder="••••••••" autocomplete="new-password">
+          </div>
+          <div class="form-row">
+            <label>Confirm password</label>
+            <input type="password" id="reset-password-2" placeholder="••••••••" autocomplete="new-password">
+          </div>
+          <button class="btn" style="width:100%" id="do-reset-password">Save new password</button>
+          <p class="error hidden" id="reset-error"></p>
+          <p class="msg-ok hidden" id="reset-ok"></p>
         </div>
         <div id="register-form" class="hidden">
           <div class="form-row">
@@ -1893,6 +1908,7 @@
       clearAuthMessages();
       document.getElementById('login-form').classList.remove('hidden');
       document.getElementById('register-form').classList.add('hidden');
+      document.getElementById('reset-password-form')?.classList.add('hidden');
       document.getElementById('tab-login').classList.add('btn'); document.getElementById('tab-login').classList.remove('btn-outline');
       document.getElementById('tab-register').classList.add('btn-outline'); document.getElementById('tab-register').classList.remove('btn');
     };
@@ -1900,6 +1916,7 @@
       clearAuthMessages();
       document.getElementById('register-form').classList.remove('hidden');
       document.getElementById('login-form').classList.add('hidden');
+      document.getElementById('reset-password-form')?.classList.add('hidden');
       document.getElementById('tab-register').classList.add('btn'); document.getElementById('tab-register').classList.remove('btn-outline');
       document.getElementById('tab-login').classList.add('btn-outline'); document.getElementById('tab-login').classList.remove('btn');
     };
@@ -2015,7 +2032,7 @@
           showAuthError('login-error', friendlyAuthError(error.message));
           return;
         }
-        showAuthOk('login-ok', 'Password reset email sent. Check your inbox (and spam) for a link from Supabase.');
+        showAuthOk('login-ok', 'If email is working, check inbox/spam for a reset link. If you see a rate-limit error, ask the Commish to set your password in Supabase instead.');
       } catch (e) {
         showAuthError('login-error', e.message || String(e));
       } finally {
@@ -2029,7 +2046,58 @@
       if (/user already registered/i.test(m)) return 'That email already has an account. Try logging in.';
       if (/email not confirmed/i.test(m)) return 'Confirm your email first, then log in.';
       if (/password/i.test(m) && /6/i.test(m)) return 'Password must be at least 6 characters.';
+      if (/rate limit/i.test(m) || /email rate/i.test(m)) {
+        return 'Email sending is temporarily limited. Ask the Commish to set a password in Admin (Supabase → Users) instead of using Forgot password.';
+      }
+      if (/signups are disabled/i.test(m)) return 'New signups are turned off in Supabase. Ask the Commish to re-enable Email signups.';
       return m;
+    }
+
+    function showResetPasswordForm() {
+      document.getElementById('login-form')?.classList.add('hidden');
+      document.getElementById('register-form')?.classList.add('hidden');
+      document.getElementById('reset-password-form')?.classList.remove('hidden');
+      showView('auth');
+    }
+
+    async function saveNewPassword() {
+      const p1 = document.getElementById('reset-password-1')?.value || '';
+      const p2 = document.getElementById('reset-password-2')?.value || '';
+      const err = document.getElementById('reset-error');
+      const ok = document.getElementById('reset-ok');
+      if (err) { err.classList.add('hidden'); err.textContent = ''; }
+      if (ok) ok.classList.add('hidden');
+      if (p1.length < 6) {
+        if (err) { err.textContent = 'Password must be at least 6 characters.'; err.classList.remove('hidden'); }
+        return;
+      }
+      if (p1 !== p2) {
+        if (err) { err.textContent = 'Passwords do not match.'; err.classList.remove('hidden'); }
+        return;
+      }
+      const btn = document.getElementById('do-reset-password');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const { error } = await sb.auth.updateUser({ password: p1 });
+        if (error) throw error;
+        if (ok) {
+          ok.textContent = 'Password saved. You can use it next time you log in.';
+          ok.classList.remove('hidden');
+        }
+        document.getElementById('reset-password-1').value = '';
+        document.getElementById('reset-password-2').value = '';
+        // If they were mid-recovery, drop them into the app
+        if (currentUser) {
+          setTimeout(() => showView('picks'), 900);
+        }
+      } catch (e) {
+        if (err) {
+          err.textContent = friendlyAuthError(e.message || e);
+          err.classList.remove('hidden');
+        }
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save new password'; }
+      }
     }
 
     document.getElementById('quick-picks-toggle').onclick = () => {
@@ -2160,6 +2228,11 @@
       document.getElementById('theme-toggle')?.click();
       closeMoreSheet();
     });
+    bindNavTap(document.getElementById('more-password-btn'), () => {
+      closeMoreSheet();
+      showResetPasswordForm();
+    });
+    document.getElementById('do-reset-password').onclick = () => saveNewPassword();
     bindNavTap(document.getElementById('more-logout-btn'), () => {
       closeMoreSheet();
       document.getElementById('logout-btn')?.click();
@@ -5317,7 +5390,15 @@
           document.getElementById('user-display').textContent = '';
           showView('auth');
         }
+        if (event === 'PASSWORD_RECOVERY' && session?.user) {
+          showResetPasswordForm();
+        }
       });
+      // Recovery links often land with type=recovery in the URL hash
+      try {
+        const hash = String(window.location.hash || '');
+        if (/type=recovery/i.test(hash)) showResetPasswordForm();
+      } catch (_) {}
     })();
   </script>
 </body>
