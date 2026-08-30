@@ -175,7 +175,8 @@
 
     @media (max-width: 720px) {
       .nav-links { display: none; }
-      .nav-user #logout-btn { display: none; }
+      .nav-user #logout-btn,
+      .nav-user #nav-password-btn { display: none; }
       .bottom-nav { display: flex; }
       .bottom-nav.hidden { display: none; }
       /* Room for fixed Save bar + tab bar + Safari chrome */
@@ -735,6 +736,7 @@
     <div class="nav-user" id="nav-user">
       <button type="button" id="theme-toggle" class="btn-sm btn-outline" title="Toggle light / dark mode">🌙</button>
       <span id="user-display"></span>
+      <button type="button" id="nav-password-btn" class="btn-sm btn-outline">Password</button>
       <button id="logout-btn" class="btn-sm btn-outline">Logout</button>
     </div>
   </nav>
@@ -2228,6 +2230,7 @@
       document.getElementById('theme-toggle')?.click();
       closeMoreSheet();
     });
+    document.getElementById('nav-password-btn')?.addEventListener('click', () => showResetPasswordForm());
     bindNavTap(document.getElementById('more-password-btn'), () => {
       closeMoreSheet();
       showResetPasswordForm();
