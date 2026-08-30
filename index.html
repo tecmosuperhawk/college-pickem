@@ -2967,6 +2967,31 @@
 
         othersCache = { players, picksBySheet };
 
+        function fiveStarListCell(p) {
+          if (!p.fiveStarGameId || !p.fiveStarSide) {
+            return '<span style="color:var(--muted);">—</span>';
+          }
+          const g = games.find(x => x.id === p.fiveStarGameId);
+          if (!g) return '<span style="color:var(--muted);">—</span>';
+          const unlocked = p.isYou || isLocked(g);
+          if (!unlocked) {
+            return '<span title="Hidden until kickoff">🔒</span>';
+          }
+          const team = p.fiveStarSide === 'away' ? g.away : g.home;
+          const line = p.fiveStarSide === 'away' ? formatOdds(-g.odds) : formatOdds(g.odds);
+          let mark = '';
+          if (!isLocked(g)) {
+            mark = ' <span title="Not kicked off yet">🔒</span>';
+          } else if (gameIsComplete(g) && hasDisplayableScores(g)) {
+            const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
+            const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
+            const ok = coveredSpread(p.fiveStarSide, g.odds, awaySc, homeSc);
+            if (ok === true) mark = ' <span style="font-weight:800;" title="Correct">✓</span>';
+            else if (ok === false) mark = ' <span style="font-weight:800;" title="Wrong">✗</span>';
+          }
+          return `<span style="color:var(--star);font-weight:600;">${escapeHtml(team)}</span> <span style="color:var(--muted);font-size:0.8rem;">${escapeHtml(line)}</span>${mark}`;
+        }
+
         if (!players.length) {
           const label = w ? w.label : 'This week';
           box.innerHTML = `
@@ -2981,26 +3006,32 @@
         let html = `
           <p class="subtitle" style="margin-bottom:1rem;">
             ${players.length} player${players.length === 1 ? '' : 's'} submitted.
-            Tap a name to view their picks (other players: only games that have started).
-            Viewing <strong>your</strong> sheet shows every pick — view only, no edits here.
+            Tap a <strong>name</strong> to view their picks (other players: only games that have started).
+            5★ stays locked until that game kicks off.
           </p>
           <div class="card" style="padding:0;overflow:hidden;">
             <table style="margin:0;">
-              <thead><tr><th>Player</th><th>Picks in</th><th></th></tr></thead>
+              <thead><tr>
+                <th>Player</th>
+                <th>Picks in</th>
+                <th>5★</th>
+              </tr></thead>
               <tbody>
         `;
         players.forEach(p => {
-          html += `<tr style="cursor:pointer;" class="others-player-row" data-sheet="${p.sheetId}">
-            <td><strong>${p.name}</strong>${p.isYou ? ' <span style="color:var(--muted);font-size:0.8rem;">(you)</span>' : ''}</td>
+          html += `<tr class="others-player-row" data-sheet="${p.sheetId}">
+            <td>
+              <button type="button" class="standings-name-btn others-name-btn" data-sheet="${p.sheetId}">${escapeHtml(p.name)}</button>${p.isYou ? ' <span style="color:var(--muted);font-size:0.8rem;">(you)</span>' : ''}
+            </td>
             <td>${p.pickCount}</td>
-            <td style="text-align:right;color:var(--accent);font-size:0.85rem;">View →</td>
+            <td style="font-size:0.88rem;line-height:1.35;">${fiveStarListCell(p)}</td>
           </tr>`;
         });
         html += '</tbody></table></div><div id="others-detail" style="margin-top:1rem;"></div>';
         box.innerHTML = html;
 
-        box.querySelectorAll('.others-player-row').forEach(row => {
-          row.onclick = () => showOtherPlayerDetail(row.dataset.sheet);
+        box.querySelectorAll('.others-name-btn').forEach(btn => {
+          btn.onclick = () => showOtherPlayerDetail(btn.dataset.sheet);
         });
       } catch (e) {
         console.error('renderOthers failed', e);
