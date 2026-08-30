@@ -573,6 +573,15 @@
       color: var(--text); font-size: 0.9rem;
     }
     .winner-banner strong { color: var(--star); }
+    .standings-name-btn {
+      background: none; border: none; padding: 0; margin: 0;
+      color: inherit; font: inherit; font-weight: 600;
+      cursor: pointer; text-align: left;
+      text-decoration: underline;
+      text-decoration-color: rgba(59,130,246,0.45);
+      text-underline-offset: 3px;
+    }
+    .standings-name-btn:hover { color: var(--accent); }
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--accent); }
     th.sortable .sort-ind { opacity: 0.5; font-size: 0.75em; }
@@ -906,6 +915,8 @@
           <tbody id="standings-body"></tbody>
         </table>
       </div>
+      <p style="font-size:0.8rem;color:var(--muted);margin:0.5rem 0 0;">Tap a player name to see their picks for the selected week. Other players’ unstarted games stay hidden.</p>
+      <div id="standings-picks-detail" style="margin-top:1rem;"></div>
     </div>
 
     <!-- ADMIN -->
@@ -2997,24 +3008,17 @@
       }
     }
 
-    function showOtherPlayerDetail(sheetId) {
-      const detail = document.getElementById('others-detail');
-      if (!othersCache || !detail) return;
-
-      const player = othersCache.players.find(p => p.sheetId === sheetId);
-      const picks = othersCache.picksBySheet[sheetId] || {};
-      if (!player) return;
-
+    function playerPicksCardHtml(player, picks, gameList, { backId, weekLabel } = {}) {
       const isSelf = !!player.isYou;
-      // Your own sheet: show every game (view-only). Others: only games that have started.
-      const visibleGames = isSelf ? games.slice() : games.filter(g => isLocked(g));
-      const upcoming = games.filter(g => !isLocked(g));
+      const visibleGames = isSelf ? gameList.slice() : gameList.filter(g => isLocked(g));
+      const upcoming = gameList.filter(g => !isLocked(g));
+      const weekBit = weekLabel ? ` · ${escapeHtml(weekLabel)}` : '';
 
       let html = `
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-            <h3 style="margin:0;">${escapeHtml(player.name)}${isSelf ? ' (you)' : ''}</h3>
-            <button class="btn btn-sm btn-outline" id="others-back-list">← All players</button>
+            <h3 style="margin:0;">${escapeHtml(player.name)}${isSelf ? ' (you)' : ''}${weekBit}</h3>
+            ${backId ? `<button class="btn btn-sm btn-outline" id="${backId}">← Close</button>` : ''}
           </div>
       `;
       if (isSelf) {
@@ -3083,7 +3087,7 @@
         }
       }
 
-      const tbGame = games.find(g => g.isTiebreaker);
+      const tbGame = gameList.find(g => g.isTiebreaker);
       if (tbGame) {
         if (isSelf || isLocked(tbGame)) {
           if (player.totalGuess != null) {
@@ -3110,7 +3114,7 @@
       }
 
       if (player.fiveStarGameId) {
-        const fg = games.find(g => g.id === player.fiveStarGameId);
+        const fg = gameList.find(g => g.id === player.fiveStarGameId);
         if (fg && (isSelf || isLocked(fg))) {
           const team = player.fiveStarSide === 'away' ? fg.away : fg.home;
           const lock = !isLocked(fg) ? ' 🔒' : '';
@@ -3125,11 +3129,81 @@
       }
 
       html += '</div>';
-      detail.innerHTML = html;
+      return html;
+    }
+
+    function showOtherPlayerDetail(sheetId) {
+      const detail = document.getElementById('others-detail');
+      if (!othersCache || !detail) return;
+
+      const player = othersCache.players.find(p => p.sheetId === sheetId);
+      const picks = othersCache.picksBySheet[sheetId] || {};
+      if (!player) return;
+
+      const w = currentWeekMeta();
+      detail.innerHTML = playerPicksCardHtml(player, picks, games, {
+        backId: 'others-back-list',
+        weekLabel: w ? w.label : ''
+      });
       detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       const back = document.getElementById('others-back-list');
       if (back) back.onclick = () => { detail.innerHTML = ''; };
+    }
+
+    async function openStandingsPlayerPicks(userId) {
+      const detail = document.getElementById('standings-picks-detail');
+      if (!detail) return;
+      if (!userId || !activeWeekId) {
+        detail.innerHTML = '<p class="subtitle">Select a week tab first.</p>';
+        return;
+      }
+      const w = currentWeekMeta();
+      detail.innerHTML = '<p class="subtitle">Loading picks…</p>';
+      try {
+        if (!games.length) {
+          await loadGamesForWeek(activeWeekId);
+        }
+        const { data: sheet, error } = await sb
+          .from('pick_sheets')
+          .select('id, user_id, submitted_at, total_points_guess, five_star_game_id, five_star_side, profiles(display_name)')
+          .eq('week_id', activeWeekId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!sheet || !sheet.submitted_at) {
+          const name = sheet?.profiles?.display_name || 'This player';
+          detail.innerHTML = `<div class="card"><p class="subtitle" style="margin:0;">${escapeHtml(name)} has not submitted picks for ${escapeHtml(w ? w.label : 'this week')} yet.</p></div>`;
+          detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          return;
+        }
+        const { data: pr, error: pErr } = await sb
+          .from('picks')
+          .select('game_id, selection')
+          .eq('pick_sheet_id', sheet.id);
+        if (pErr) throw pErr;
+        const picks = {};
+        (pr || []).forEach(p => { picks[p.game_id] = p.selection; });
+        const player = {
+          sheetId: sheet.id,
+          userId: sheet.user_id,
+          name: sheet.profiles?.display_name || (userId === currentUser?.id ? currentUser.name : 'Player'),
+          isYou: sheet.user_id === currentUser?.id,
+          totalGuess: sheet.total_points_guess,
+          fiveStarGameId: sheet.five_star_game_id,
+          fiveStarSide: sheet.five_star_side
+        };
+        detail.innerHTML = playerPicksCardHtml(player, picks, games, {
+          backId: 'standings-picks-close',
+          weekLabel: w ? w.label : ''
+        });
+        detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const close = document.getElementById('standings-picks-close');
+        if (close) close.onclick = () => { detail.innerHTML = ''; };
+      } catch (e) {
+        console.error('openStandingsPlayerPicks', e);
+        detail.innerHTML = `<p class="subtitle" style="color:var(--danger);">Could not load picks: ${escapeHtml(e.message || e)}</p>`;
+      }
     }
 
     // ---------- STANDINGS ----------
@@ -3256,7 +3330,7 @@
         }
         return `<tr class="${classes}">
           <td class="${isWinner || (i === 0 && r.submitted) ? 'rank-1' : ''}">${rankLabel}</td>
-          <td>${r.name}${nameExtra}</td>
+          <td><button type="button" class="standings-name-btn" data-stand-user="${r.userId || ''}">${escapeHtml(r.name || 'Player')}</button>${nameExtra}</td>
           <td class="col-record">${r.record}</td>
           <td>${r.pts}</td>
           <td>${starCell}</td>
@@ -3264,6 +3338,14 @@
           ${showTb ? `<td>${formatTbCell(r, weekFinal, actualTotal, { tbVisible })}</td>` : ''}
         </tr>`;
       }).join('');
+
+      body.querySelectorAll('.standings-name-btn').forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const uid = btn.getAttribute('data-stand-user');
+          if (uid) openStandingsPlayerPicks(uid);
+        };
+      });
 
       // Tap / click to show week labels (mobile has no hover)
       body.querySelectorAll('[data-ww-toggle]').forEach(btn => {
