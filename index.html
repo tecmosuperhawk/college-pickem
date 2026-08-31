@@ -88,7 +88,7 @@
       color: #fff;
     }
     .nav-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; color: var(--muted); }
-    .container { max-width: 960px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    .container { max-width: 1600px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
     /* Mobile bottom tab bar — sits above Safari chrome via visualViewport + safe-area */
     .bottom-nav {
@@ -587,13 +587,14 @@
     .gp-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .gp-grid {
       border-collapse: separate; border-spacing: 0;
-      font-size: 0.75rem; min-width: 100%;
+      font-size: 0.8rem; min-width: 100%;
     }
     .gp-grid th, .gp-grid td {
       border-bottom: 1px solid var(--border);
       border-right: 1px solid var(--border);
-      padding: 0.35rem 0.3rem;
+      padding: 0.4rem 0.28rem;
       vertical-align: middle;
+      overflow: hidden;
     }
     .gp-grid thead th {
       background: var(--card);
@@ -604,39 +605,65 @@
     .gp-sticky {
       position: sticky; left: 0; z-index: 4;
       background: var(--card);
-      min-width: 7.2rem; max-width: 8.5rem;
+      min-width: 8.5rem; max-width: 10rem;
       text-align: left;
       box-shadow: 4px 0 8px rgba(0,0,0,0.08);
     }
     .gp-grid thead .gp-sticky { z-index: 5; }
     .gp-game-head {
-      min-width: 2.6rem; max-width: 3.1rem;
-      height: 11.5rem;
+      min-width: 4.4rem;
+      width: 4.4rem;
       vertical-align: bottom;
-      padding: 0.4rem 0.2rem 0.45rem;
+      padding: 0.45rem 0.25rem 0.4rem;
     }
     .gp-game-head-inner {
-      writing-mode: vertical-rl;
-      transform: rotate(180deg);
-      white-space: nowrap;
-      font-size: 0.72rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.15rem;
+      font-size: 0.68rem;
       font-weight: 700;
       color: var(--text);
       line-height: 1.15;
+      text-align: center;
+    }
+    .gp-game-head-inner .gp-match {
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: var(--muted);
+      max-width: 4.1rem;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    .gp-helms { display: flex; align-items: center; gap: 0.12rem; }
+    .gp-helm {
+      width: 28px; height: 28px; object-fit: contain;
+      display: block; background: transparent;
     }
     .gp-game-line {
-      display: block;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--accent);
-      margin-top: 0.35rem;
+      font-size: 0.72rem;
     }
     .gp-pick {
       text-align: center;
-      min-width: 2.6rem;
-      max-width: 3.1rem;
+      min-width: 4.4rem;
+      width: 4.4rem;
       font-weight: 700;
-      line-height: 1.2;
+      line-height: 1.15;
+      position: relative;
     }
+    .gp-pick .gp-name {
+      display: block;
+      font-size: 0.62rem;
+      font-weight: 600;
+      max-width: 4.1rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin: 0 auto;
+    }
+    .gp-mark { display: block; font-size: 0.85rem; line-height: 1; }
     .gp-pick.ok { background: rgba(34,197,94,0.18); color: var(--success); }
     .gp-pick.bad { background: rgba(239,68,68,0.16); color: var(--danger); }
     .gp-pick.lock { color: var(--muted); font-weight: 600; }
@@ -3118,11 +3145,66 @@
     let othersGridSort = { key: 'player', dir: 'asc' };
 
     function shortTeamName(name) {
-      const s = String(name || '').trim();
-      if (!s) return '—';
-      if (s.length <= 11) return s;
-      const parts = s.split(/\s+/);
-      return parts[parts.length - 1];
+      return String(name || '').trim() || '—';
+    }
+
+    const TEAM_ESPN_IDS = {
+      'air force':2005,'akron':2006,'alabama':333,'appalachian state':2026,'arizona':12,'arizona state':9,
+      'arkansas':8,'arkansas state':2032,'army':349,'auburn':2,'ball state':2050,'baylor':239,'boise state':68,
+      'boston college':103,'bowling green':189,'buffalo':2084,'byu':252,'california':25,'cal':25,
+      'central michigan':2117,'charlotte':2429,'cincinnati':2132,'clemson':228,'coastal carolina':324,
+      'colorado':38,'colorado state':36,'delaware':48,'duke':150,'east carolina':151,'eastern michigan':2199,
+      'fiu':2229,'florida':57,'florida atlantic':2226,'florida state':52,'fresno state':278,'georgia':61,
+      'georgia southern':290,'georgia state':2247,'georgia tech':59,'hawaii':62,"hawai'i":62,'hawaiʻi':62,
+      'houston':248,'illinois':356,'indiana':84,'iowa':2294,'iowa state':66,'jacksonville state':55,
+      'james madison':256,'kansas':2305,'kansas state':2306,'kennesaw state':249,'kent state':2309,
+      'kentucky':96,'liberty':2335,'louisiana':309,'louisiana tech':2348,'louisville':97,'lsu':99,
+      'marshall':276,'maryland':120,'memphis':235,'miami':2390,'miami fl':2390,'miami oh':193,
+      'michigan':130,'michigan state':127,'middle tennessee':2393,'minnesota':135,'mississippi state':344,
+      'missouri':142,'missouri state':2623,'navy':2426,'nc state':152,'nebraska':158,'nevada':2440,
+      'new mexico':167,'new mexico state':166,'north carolina':153,'north dakota state':2491,'north texas':249,
+      'northern illinois':2459,'northwestern':77,'notre dame':87,'ohio':195,'ohio state':194,'oklahoma':201,
+      'oklahoma state':197,'old dominion':295,'ole miss':145,'oregon':2483,'oregon state':204,'penn state':213,
+      'pittsburgh':221,'pitt':221,'purdue':2509,'rice':242,'rutgers':164,'sacramento state':16,
+      'sam houston':2534,'san diego state':21,'san jose state':23,'smu':2567,'south alabama':6,
+      'south carolina':2579,'south florida':58,'southern miss':2572,'stanford':24,'syracuse':183,
+      'tcu':2628,'temple':218,'tennessee':2633,'texas':251,'texas a&m':245,'texas and m':245,'texas am':245,'texas state':326,
+      'texas tech':2641,'toledo':2649,'troy':2653,'tulane':2655,'tulsa':202,'uab':5,'ucf':2116,'ucla':26,
+      'uconn':41,'ulm':2433,'umass':113,'unlv':2439,'usc':30,'utah':254,'utah state':328,'utep':2638,
+      'utsa':2636,'vanderbilt':238,'virginia':258,'virginia tech':259,'wake forest':154,'washington':264,
+      'washington state':265,'west virginia':277,'western kentucky':98,'western michigan':2711,
+      'wisconsin':275,'wyoming':2751,'idaho':70,'eastern illinois':2197,'western illinois':2710,
+      'illinois state':2287,'indiana state':282,'southern illinois':79,'north dakota':155,'south dakota':233,
+      'south dakota state':2571,'northern iowa':2460,'montana':149,'montana state':147,'weber state':2692,
+      'idaho state':304,'eastern washington':331,'portland state':2502,'uc davis':302,'cal poly':13,
+      'villanova':222,'richmond':257,'william & mary':2729,'james madison dukes':256
+    };
+
+    function normTeamKey(name) {
+      return String(name || '')
+        .toLowerCase()
+        .replace(/hawai[iʻ']/g, 'hawaii')
+        .replace(/&/g, 'and')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+
+    function espnIdForTeam(name) {
+      const key = normTeamKey(name);
+      if (TEAM_ESPN_IDS[key]) return TEAM_ESPN_IDS[key];
+      const compact = key.replace(/\s+/g, '');
+      for (const [k, id] of Object.entries(TEAM_ESPN_IDS)) {
+        if (k.replace(/\s+/g, '') === compact) return id;
+      }
+      return null;
+    }
+
+    function teamHelmetHtml(name, size) {
+      const label = String(name || '').trim();
+      const id = espnIdForTeam(label);
+      if (!id) return `<span class="gp-name" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+      const src = `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
+      return `<img class="gp-helm" src="${src}" width="${size || 28}" height="${size || 28}" alt="${escapeHtml(label)}" title="${escapeHtml(label)}" loading="lazy">`;
     }
 
     function gradePlayerPick(player, g, picks) {
@@ -3190,9 +3272,11 @@
       games.forEach(g => {
         const lineHome = formatOdds(g.odds);
         const lock = isLocked(g) ? '' : ' 🔒';
-        headGames += `<th class="gp-game-head" title="${escapeHtml(g.away)} @ ${escapeHtml(g.home)} ${lineHome}">
+        const title = `${g.away} @ ${g.home} ${lineHome}`;
+        headGames += `<th class="gp-game-head" title="${escapeHtml(title)}">
           <div class="gp-game-head-inner">
-            ${escapeHtml(shortTeamName(g.away))} @ ${escapeHtml(shortTeamName(g.home))}${lock}
+            <div class="gp-helms">${teamHelmetHtml(g.away, 26)}<span style="color:var(--muted);font-size:0.6rem;">@</span>${teamHelmetHtml(g.home, 26)}</div>
+            <div class="gp-match">${escapeHtml(g.away)} @ ${escapeHtml(g.home)}${lock}</div>
             <span class="gp-game-line">${escapeHtml(lineHome)}</span>
           </div>
         </th>`;
@@ -3212,13 +3296,13 @@
             return;
           }
           const team = info.sel === 'away' ? g.away : g.home;
-          const label = shortTeamName(team) + (info.isDefault ? '*' : '');
           let cls = 'gp-pick';
           let mark = '';
-          if (info.result === true) { cls += ' ok'; mark = ' ✓'; }
-          else if (info.result === false) { cls += ' bad'; mark = ' ✗'; }
-          else if (!info.locked) { cls += ' lock'; mark = ' 🔒'; }
-          cells += `<td class="${cls}" title="${escapeHtml(team)}">${escapeHtml(label)}${mark}</td>`;
+          if (info.result === true) { cls += ' ok'; mark = '<span class="gp-mark">✓</span>'; }
+          else if (info.result === false) { cls += ' bad'; mark = '<span class="gp-mark">✗</span>'; }
+          else if (!info.locked) { cls += ' lock'; mark = '<span class="gp-mark">🔒</span>'; }
+          const star = info.isDefault ? '*' : '';
+          cells += `<td class="${cls}" title="${escapeHtml(team)}">${teamHelmetHtml(team, 30)}${mark}<span class="gp-name">${escapeHtml(team)}${star}</span></td>`;
         });
 
         let starHtml = '—';
@@ -3239,7 +3323,7 @@
                 if (ok === true) mark = ' ✓';
                 else if (ok === false) mark = ' ✗';
               }
-              starHtml = `${escapeHtml(team)}${mark}`;
+              starHtml = `${teamHelmetHtml(team, 26)} <span>${escapeHtml(team)}${mark}</span>`;
             }
           }
         }
