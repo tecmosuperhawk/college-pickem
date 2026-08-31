@@ -583,6 +583,71 @@
       text-underline-offset: 3px;
     }
     .standings-name-btn:hover { color: var(--accent); }
+
+    .gp-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .gp-grid {
+      border-collapse: separate; border-spacing: 0;
+      font-size: 0.75rem; min-width: 100%;
+    }
+    .gp-grid th, .gp-grid td {
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      padding: 0.35rem 0.3rem;
+      vertical-align: middle;
+    }
+    .gp-grid thead th {
+      background: var(--card);
+      position: sticky; top: 0; z-index: 3;
+      font-weight: 700; color: var(--muted);
+      text-transform: none;
+    }
+    .gp-sticky {
+      position: sticky; left: 0; z-index: 4;
+      background: var(--card);
+      min-width: 7.2rem; max-width: 8.5rem;
+      text-align: left;
+      box-shadow: 4px 0 8px rgba(0,0,0,0.08);
+    }
+    .gp-grid thead .gp-sticky { z-index: 5; }
+    .gp-game-head {
+      min-width: 2.6rem; max-width: 3.1rem;
+      height: 11.5rem;
+      vertical-align: bottom;
+      padding: 0.4rem 0.2rem 0.45rem;
+    }
+    .gp-game-head-inner {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      white-space: nowrap;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.15;
+    }
+    .gp-game-line {
+      display: block;
+      font-weight: 600;
+      color: var(--accent);
+      margin-top: 0.35rem;
+    }
+    .gp-pick {
+      text-align: center;
+      min-width: 2.6rem;
+      max-width: 3.1rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .gp-pick.ok { background: rgba(34,197,94,0.18); color: var(--success); }
+    .gp-pick.bad { background: rgba(239,68,68,0.16); color: var(--danger); }
+    .gp-pick.lock { color: var(--muted); font-weight: 600; }
+    .gp-star, .gp-total { text-align: center; font-weight: 800; }
+    .gp-star { min-width: 7.5rem; max-width: 11rem; white-space: normal; line-height: 1.25; font-size: 0.78rem; }
+    .gp-total { white-space: nowrap; }
+    .gp-total { min-width: 3.2rem; }
+    .gp-grid th.sortable { cursor: pointer; }
+    .gp-you td { background: rgba(59,130,246,0.08); }
+    .gp-you .gp-sticky { background: #1e3a5f; }
+    html[data-theme="light"] .gp-you .gp-sticky { background: #dbeafe; }
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { color: var(--accent); }
     th.sortable .sort-ind { opacity: 0.5; font-size: 0.75em; }
@@ -3042,77 +3107,183 @@
         }).sort((a, b) => a.name.localeCompare(b.name));
 
         othersCache = { players, picksBySheet };
-
-        function fiveStarListCell(p) {
-          if (!p.fiveStarGameId || !p.fiveStarSide) {
-            return '<span style="color:var(--muted);">—</span>';
-          }
-          const g = games.find(x => x.id === p.fiveStarGameId);
-          if (!g) return '<span style="color:var(--muted);">—</span>';
-          const unlocked = p.isYou || isLocked(g);
-          if (!unlocked) {
-            return '<span title="Hidden until kickoff">🔒</span>';
-          }
-          const team = p.fiveStarSide === 'away' ? g.away : g.home;
-          const line = p.fiveStarSide === 'away' ? formatOdds(-g.odds) : formatOdds(g.odds);
-          let mark = '';
-          if (!isLocked(g)) {
-            mark = ' <span title="Not kicked off yet">🔒</span>';
-          } else if (gameIsComplete(g) && hasDisplayableScores(g)) {
-            const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
-            const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
-            const ok = coveredSpread(p.fiveStarSide, g.odds, awaySc, homeSc);
-            if (ok === true) mark = ' <span style="font-weight:800;" title="Correct">✓</span>';
-            else if (ok === false) mark = ' <span style="font-weight:800;" title="Wrong">✗</span>';
-          }
-          return `<span style="color:var(--star);font-weight:600;">${escapeHtml(team)}</span> <span style="color:var(--muted);font-size:0.8rem;">${escapeHtml(line)}</span>${mark}`;
-        }
-
-        if (!players.length) {
-          const label = w ? w.label : 'This week';
-          box.innerHTML = `
-            <div class="card empty-state">
-              <div class="empty-state-icon">📋</div>
-              <strong>No picks in yet</strong>
-              <p>Nobody has submitted a sheet for ${escapeHtml(label)} yet. Check back after the group saves their picks — locked games will show as they start.</p>
-            </div>`;
-          return;
-        }
-
-        let html = `
-          <p class="subtitle" style="margin-bottom:1rem;">
-            ${players.length} player${players.length === 1 ? '' : 's'} submitted.
-            Tap a <strong>name</strong> to view their picks (other players: only games that have started).
-            5★ stays locked until that game kicks off.
-          </p>
-          <div class="card" style="padding:0;overflow:hidden;">
-            <table style="margin:0;">
-              <thead><tr>
-                <th>Player</th>
-                <th>Picks in</th>
-                <th>5★</th>
-              </tr></thead>
-              <tbody>
-        `;
-        players.forEach(p => {
-          html += `<tr class="others-player-row" data-sheet="${p.sheetId}">
-            <td>
-              <button type="button" class="standings-name-btn others-name-btn" data-sheet="${p.sheetId}">${escapeHtml(p.name)}</button>${p.isYou ? ' <span style="color:var(--muted);font-size:0.8rem;">(you)</span>' : ''}
-            </td>
-            <td>${p.pickCount}</td>
-            <td style="font-size:0.88rem;line-height:1.35;">${fiveStarListCell(p)}</td>
-          </tr>`;
-        });
-        html += '</tbody></table></div><div id="others-detail" style="margin-top:1rem;"></div>';
-        box.innerHTML = html;
-
-        box.querySelectorAll('.others-name-btn').forEach(btn => {
-          btn.onclick = () => showOtherPlayerDetail(btn.dataset.sheet);
-        });
+        othersGridSort = othersGridSort || { key: 'player', dir: 'asc' };
+        paintOthersGrid();
       } catch (e) {
         console.error('renderOthers failed', e);
         box.innerHTML = `<p class="subtitle" style="color:var(--danger);">Could not load players: ${e.message || e}</p>`;
       }
+    }
+
+    let othersGridSort = { key: 'player', dir: 'asc' };
+
+    function shortTeamName(name) {
+      const s = String(name || '').trim();
+      if (!s) return '—';
+      if (s.length <= 11) return s;
+      const parts = s.split(/\s+/);
+      return parts[parts.length - 1];
+    }
+
+    function gradePlayerPick(player, g, picks) {
+      const locked = isLocked(g);
+      const isSelf = !!player.isYou;
+      let sel = picks[g.id];
+      let isDefault = false;
+      if (!sel && locked) {
+        sel = 'away';
+        isDefault = true;
+      }
+      const complete = gameIsComplete(g) && hasDisplayableScores(g);
+      let result = null;
+      if (sel && complete) {
+        const awaySc = LIVE_SCORES[g.id]?.away ?? g.away_score;
+        const homeSc = LIVE_SCORES[g.id]?.home ?? g.home_score;
+        result = coveredSpread(sel, g.odds, awaySc, homeSc);
+      }
+      return { locked, isSelf, sel, isDefault, complete, result };
+    }
+
+    function paintOthersGrid() {
+      const box = document.getElementById('others-content');
+      if (!box || !othersCache) return;
+      const { players, picksBySheet } = othersCache;
+      const w = currentWeekMeta();
+
+      if (!players.length) {
+        const label = w ? w.label : 'This week';
+        box.innerHTML = `
+          <div class="card empty-state">
+            <div class="empty-state-icon">📋</div>
+            <strong>No picks in yet</strong>
+            <p>Nobody has submitted a sheet for ${escapeHtml(label)} yet. Check back after the group saves their picks — locked games will show as they start.</p>
+          </div>`;
+        return;
+      }
+
+      const rows = players.map(p => {
+        const picks = picksBySheet[p.sheetId] || {};
+        let correct = 0;
+        let graded = 0;
+        games.forEach(g => {
+          const info = gradePlayerPick(p, g, picks);
+          if (info.result === true) correct++;
+          if (info.result === true || info.result === false) graded++;
+        });
+        return { ...p, picks, correct, graded };
+      });
+
+      const sort = othersGridSort;
+      rows.sort((a, b) => {
+        if (sort.key === 'total') {
+          if (a.correct !== b.correct) return sort.dir === 'desc' ? b.correct - a.correct : a.correct - b.correct;
+          return a.name.localeCompare(b.name);
+        }
+        const cmp = a.name.localeCompare(b.name);
+        return sort.dir === 'desc' ? -cmp : cmp;
+      });
+
+      const playerInd = sort.key === 'player' ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      const totalInd = sort.key === 'total' ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+
+      let headGames = '';
+      games.forEach(g => {
+        const lineHome = formatOdds(g.odds);
+        const lock = isLocked(g) ? '' : ' 🔒';
+        headGames += `<th class="gp-game-head" title="${escapeHtml(g.away)} @ ${escapeHtml(g.home)} ${lineHome}">
+          <div class="gp-game-head-inner">
+            ${escapeHtml(shortTeamName(g.away))} @ ${escapeHtml(shortTeamName(g.home))}${lock}
+            <span class="gp-game-line">${escapeHtml(lineHome)}</span>
+          </div>
+        </th>`;
+      });
+
+      let body = '';
+      rows.forEach(p => {
+        let cells = '';
+        games.forEach(g => {
+          const info = gradePlayerPick(p, g, p.picks);
+          if (!info.locked && !info.isSelf) {
+            cells += `<td class="gp-pick lock" title="Locked until kickoff">🔒</td>`;
+            return;
+          }
+          if (!info.sel) {
+            cells += `<td class="gp-pick lock">—</td>`;
+            return;
+          }
+          const team = info.sel === 'away' ? g.away : g.home;
+          const label = shortTeamName(team) + (info.isDefault ? '*' : '');
+          let cls = 'gp-pick';
+          let mark = '';
+          if (info.result === true) { cls += ' ok'; mark = ' ✓'; }
+          else if (info.result === false) { cls += ' bad'; mark = ' ✗'; }
+          else if (!info.locked) { cls += ' lock'; mark = ' 🔒'; }
+          cells += `<td class="${cls}" title="${escapeHtml(team)}">${escapeHtml(label)}${mark}</td>`;
+        });
+
+        let starHtml = '—';
+        if (p.fiveStarGameId && p.fiveStarSide) {
+          const fg = games.find(x => x.id === p.fiveStarGameId);
+          if (fg) {
+            const unlocked = p.isYou || isLocked(fg);
+            if (!unlocked) {
+              starHtml = '🔒';
+            } else {
+              const team = p.fiveStarSide === 'away' ? fg.away : fg.home;
+              let mark = '';
+              if (!isLocked(fg)) mark = ' 🔒';
+              else if (gameIsComplete(fg) && hasDisplayableScores(fg)) {
+                const awaySc = LIVE_SCORES[fg.id]?.away ?? fg.away_score;
+                const homeSc = LIVE_SCORES[fg.id]?.home ?? fg.home_score;
+                const ok = coveredSpread(p.fiveStarSide, fg.odds, awaySc, homeSc);
+                if (ok === true) mark = ' ✓';
+                else if (ok === false) mark = ' ✗';
+              }
+              starHtml = `${escapeHtml(team)}${mark}`;
+            }
+          }
+        }
+
+        body += `<tr class="${p.isYou ? 'gp-you' : ''}">
+          <td class="gp-sticky"><strong>${escapeHtml(p.name)}</strong>${p.isYou ? ' <span style="color:var(--muted);font-size:0.7rem;">(you)</span>' : ''}</td>
+          ${cells}
+          <td class="gp-star" style="color:var(--star);">${starHtml}</td>
+          <td class="gp-total">${p.correct}</td>
+        </tr>`;
+      });
+
+      box.innerHTML = `
+        <p class="subtitle" style="margin-bottom:0.75rem;">
+          ${players.length} player${players.length === 1 ? '' : 's'}.
+          Scroll sideways for all games. 🔒 = not kicked off yet (picks hidden). Green ✓ / red ✗ after the game is final.
+          * = defaulted to away.
+        </p>
+        <div class="card gp-wrap" style="padding:0;">
+          <table class="gp-grid">
+            <thead>
+              <tr>
+                <th class="gp-sticky sortable" data-gp-sort="player">Player${playerInd}</th>
+                ${headGames}
+                <th class="gp-star">5★</th>
+                <th class="gp-total sortable" data-gp-sort="total">Total${totalInd}</th>
+              </tr>
+            </thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+        <div id="others-detail"></div>`;
+
+      box.querySelectorAll('[data-gp-sort]').forEach(th => {
+        th.onclick = () => {
+          const key = th.getAttribute('data-gp-sort');
+          if (othersGridSort.key === key) {
+            othersGridSort.dir = othersGridSort.dir === 'asc' ? 'desc' : 'asc';
+          } else {
+            othersGridSort = { key, dir: key === 'total' ? 'desc' : 'asc' };
+          }
+          paintOthersGrid();
+        };
+      });
     }
 
     function playerPicksCardHtml(player, picks, gameList, { backId, weekLabel } = {}) {
