@@ -664,8 +664,19 @@
       margin: 0 auto;
     }
     .gp-mark { display: block; font-size: 0.85rem; line-height: 1; }
-    .gp-pick.ok { background: rgba(34,197,94,0.18); color: var(--success); }
-    .gp-pick.bad { background: rgba(239,68,68,0.16); color: var(--danger); }
+    .gp-pick.ok {
+      background: #14532d;
+      color: #bbf7d0;
+      box-shadow: inset 0 0 0 2px #4ade80;
+    }
+    .gp-pick.ok .gp-name { color: #dcfce7; }
+    .gp-pick.bad {
+      background: rgba(239,68,68,0.16);
+      color: var(--danger);
+      box-shadow: none;
+    }
+    .gp-pick.bad .gp-name { color: var(--danger); }
+    .gp-pick.ok .gp-mark, .gp-pick.bad .gp-mark { font-weight: 900; font-size: 1rem; }
     .gp-pick.lock { color: var(--muted); font-weight: 600; }
     .gp-star, .gp-total { text-align: center; font-weight: 800; }
     .gp-star { min-width: 7.5rem; max-width: 11rem; white-space: normal; line-height: 1.25; font-size: 0.78rem; }
@@ -3162,7 +3173,7 @@
       'marshall':276,'maryland':120,'memphis':235,'miami':2390,'miami fl':2390,'miami oh':193,
       'michigan':130,'michigan state':127,'middle tennessee':2393,'minnesota':135,'mississippi state':344,
       'missouri':142,'missouri state':2623,'navy':2426,'nc state':152,'nebraska':158,'nevada':2440,
-      'new mexico':167,'new mexico state':166,'north carolina':153,'north dakota state':2491,'north texas':249,
+      'new mexico':167,'new mexico state':166,'north carolina':153,'north dakota state':2449,'north texas':249,
       'northern illinois':2459,'northwestern':77,'notre dame':87,'ohio':195,'ohio state':194,'oklahoma':201,
       'oklahoma state':197,'old dominion':295,'ole miss':145,'oregon':2483,'oregon state':204,'penn state':213,
       'pittsburgh':221,'pitt':221,'purdue':2509,'rice':242,'rutgers':164,'sacramento state':16,
@@ -3204,7 +3215,7 @@
       const id = espnIdForTeam(label);
       if (!id) return `<span class="gp-name" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
       const src = `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
-      return `<img class="gp-helm" src="${src}" width="${size || 28}" height="${size || 28}" alt="${escapeHtml(label)}" title="${escapeHtml(label)}" loading="lazy">`;
+      return `<img class="gp-helm" src="${src}" width="${size || 28}" height="${size || 28}" alt="${escapeHtml(label)}" title="${escapeHtml(label)}" loading="lazy" onerror="this.style.display='none'">`;
     }
 
     function gradePlayerPick(player, g, picks) {
