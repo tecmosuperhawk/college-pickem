@@ -4821,17 +4821,32 @@
       const b = normalizeTeamName(espnName);
       if (!a || !b) return false;
       if (a === b) return true;
-      if (a.includes(b) || b.includes(a)) return true;
-      const aliases = TEAM_ALIASES[a] || [a];
-      if (aliases.some(al => {
-        const n = normalizeTeamName(al);
-        return n === b || b.includes(n) || n.includes(b);
-      })) return true;
-      for (const [key, list] of Object.entries(TEAM_ALIASES)) {
-        const keyN = normalizeTeamName(key);
-        const listN = list.map(normalizeTeamName);
-        if ((keyN === a || listN.includes(a)) && (keyN === b || listN.includes(b) || listN.some(x => b.includes(x) || x.includes(b)))) {
-          return true;
+
+      const namesFor = (s) => {
+        const n = normalizeTeamName(s);
+        return [n, ...(TEAM_ALIASES[n] || []).map(normalizeTeamName)];
+      };
+      const aList = namesFor(a);
+      const bList = namesFor(b);
+      if (aList.some(x => bList.includes(x))) return true;
+
+      // "Michigan Wolverines" may match "Michigan", but "Western Michigan" must not.
+      const PREFIX = /^(western|eastern|central|northern|southern|middle|coastal|south|north|east|west)\b/;
+      function tokens(s) { return String(s).split(/\s+/).filter(Boolean); }
+      function prefixOrMascot(short, long) {
+        const ts = tokens(short);
+        const tl = tokens(long);
+        if (!ts.length || tl.length < ts.length) return false;
+        if (PREFIX.test(long) && !PREFIX.test(short)) return false;
+        if (tl.slice(0, ts.length).join(' ') !== ts.join(' ')) return false;
+        // remaining tokens are mascot words only (wolverines, eagles…) — not "state" unless short also has state
+        const extra = tl.slice(ts.length);
+        if (extra.includes('state') && !ts.includes('state')) return false;
+        return true;
+      }
+      for (const x of aList) {
+        for (const y of bList) {
+          if (prefixOrMascot(x, y) || prefixOrMascot(y, x)) return true;
         }
       }
       return false;
