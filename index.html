@@ -965,7 +965,7 @@
           · Total: <span id="total-status">needed</span>
           · 5★: <span id="star-status">needed</span>
         </div>
-        <p class="hidden" id="locked-hint" style="font-size:0.8rem;color:var(--muted);margin-bottom:0.4rem;"></p>
+        
         <p class="success-msg hidden" id="save-flash" style="margin-bottom:0.6rem;font-weight:600;">Picks saved successfully</p>
         <button class="btn" id="submit-btn" disabled>Save Picks</button>
       </div>
@@ -2912,7 +2912,6 @@
       updateNextLockBanner();
       const openGames = games.filter(g => !isLocked(g));
       const openPicked = openGames.filter(g => myPicks[g.id]).length;
-      const lockedCount = games.length - openGames.length;
       document.getElementById('picked-count').textContent = openPicked;
       document.getElementById('total-games').textContent = openGames.length;
 
@@ -2943,16 +2942,6 @@
       const submitBtn = document.getElementById('submit-btn');
       if (submitBtn) submitBtn.disabled = !games.length;
 
-      // Hint about locked defaults
-      const hint = document.getElementById('locked-hint');
-      if (hint) {
-        if (lockedCount > 0) {
-          hint.textContent = `${lockedCount} locked game${lockedCount > 1 ? 's' : ''} defaulted to the away team.`;
-          hint.classList.remove('hidden');
-        } else {
-          hint.classList.add('hidden');
-        }
-      }
     }
 
     /** Build a short reminder for anything still incomplete (open games only). */
