@@ -3131,7 +3131,28 @@
             fiveStarSide: s.five_star_side,
             pickCount: Object.keys(valid).length
           };
-        }).sort((a, b) => a.name.localeCompare(b.name));
+        });
+
+        const seenUsers = new Set(players.map(p => p.userId));
+        if (games.some(g => isLocked(g))) {
+          const { data: allProfs } = await sb.from('profiles').select('id, display_name');
+          (allProfs || []).forEach(prof => {
+            if (seenUsers.has(prof.id)) return;
+            const sid = `default-${prof.id}`;
+            picksBySheet[sid] = {};
+            players.push({
+              sheetId: sid,
+              userId: prof.id,
+              name: prof.display_name || 'Player',
+              isYou: prof.id === currentUser?.id,
+              totalGuess: null,
+              fiveStarGameId: null,
+              fiveStarSide: null,
+              pickCount: 0
+            });
+          });
+        }
+        players.sort((a, b) => a.name.localeCompare(b.name));
 
         othersCache = { players, picksBySheet };
         othersGridSort = othersGridSort || { key: 'player', dir: 'asc' };
@@ -3534,9 +3555,30 @@
           .maybeSingle();
         if (error) throw error;
         if (!sheet || !sheet.submitted_at) {
-          const name = sheet?.profiles?.display_name || 'This player';
-          detail.innerHTML = `<div class="card"><p class="subtitle" style="margin:0;">${escapeHtml(name)} has not submitted picks for ${escapeHtml(w ? w.label : 'this week')} yet.</p></div>`;
-          detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          const name = sheet?.profiles?.display_name
+            || (userId === currentUser?.id ? currentUser.name : 'This player');
+          const anyLocked = games.some(g => isLocked(g));
+          if (!anyLocked) {
+            detail.innerHTML = `<div class="card"><p class="subtitle" style="margin:0;">${escapeHtml(name)} has not submitted picks for ${escapeHtml(w ? w.label : 'this week')} yet.</p></div>`;
+            detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            return;
+          }
+          const player = {
+            sheetId: null,
+            userId,
+            name,
+            isYou: userId === currentUser?.id,
+            totalGuess: null,
+            fiveStarGameId: null,
+            fiveStarSide: null
+          };
+          detail.innerHTML = playerPicksCardHtml(player, {}, games, {
+            backId: 'standings-picks-close',
+            weekLabel: w ? w.label : ''
+          }) + `<p style="font-size:0.8rem;color:var(--muted);margin:0.5rem 0 0;">No sheet submitted — locked games default to the away team.</p>`;
+          detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const close0 = document.getElementById('standings-picks-close');
+          if (close0) close0.onclick = () => { detail.innerHTML = ''; };
           return;
         }
         const { data: pr, error: pErr } = await sb
@@ -3670,7 +3712,8 @@
         ].filter(Boolean).join(' ');
         const rankLabel = r.submitted ? (r.rank != null ? r.rank : i + 1) : '—';
         const nameExtra = [
-          r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>',
+          r.autoDefault ? ' <span style="color:var(--muted);font-size:0.75rem;">(away defaults)</span>'
+            : (r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'),
           r.userId === currentUser?.id ? ' <span style="color:var(--muted);font-size:0.75rem;">(you)</span>' : '',
           isWinner ? ' <span style="color:var(--star);font-size:0.75rem;">🏆</span>' : ''
         ].join('');
@@ -3871,14 +3914,19 @@
           const finalWeek = weekIsFinal(games);
           const actualTotal = tbActualTotal(games);
 
+          const anyLocked = games.some(g => isLocked(g));
           const rows = (profiles || []).map(prof => {
             const sheet = sheetByUser[prof.id];
             const isSub = !!(sheet && sheet.submitted_at);
-            if (!isSub) {
+            const picks = (isSub && sheet) ? (picksBySheet[sheet.id] || {}) : {};
+
+            // No sheet and nothing has kicked off yet → still waiting
+            if (!isSub && !anyLocked) {
               return {
                 name: prof.display_name,
                 userId: prof.id,
                 submitted: false,
+                autoDefault: false,
                 record: '—',
                 pts: '—',
                 star: '—',
@@ -3888,10 +3936,8 @@
               };
             }
 
-            const picks = picksBySheet[sheet.id] || {};
             let wins = 0, losses = 0, starHit = 0;
-
-            // Grade every slate game; missing pick on a locked/complete game defaults to away
+            // Missing pick on a locked game defaults to away — including players who never submitted
             games.forEach(g => {
               if (!g || !g.id) return;
               let sel = picks[g.id];
@@ -3900,8 +3946,7 @@
               const result = coverResultForStandings(sel, g);
               if (result === true) {
                 wins++;
-                // 5★ tracked separately — does NOT add to weekly points / winner
-                if (sheet.five_star_game_id === g.id && sheet.five_star_side === sel) {
+                if (isSub && sheet.five_star_game_id === g.id && sheet.five_star_side === sel) {
                   starHit = 1;
                 }
               } else if (result === false) {
@@ -3909,7 +3954,7 @@
               }
             });
 
-            const tbGuess = sheet.total_points_guess;
+            const tbGuess = isSub ? sheet.total_points_guess : null;
             let tbDist = null;
             if (actualTotal != null && tbGuess != null && !isNaN(Number(tbGuess))) {
               tbDist = Math.abs(Number(tbGuess) - actualTotal);
@@ -3919,6 +3964,7 @@
               name: prof.display_name,
               userId: prof.id,
               submitted: true,
+              autoDefault: !isSub,
               record: `${wins}-${losses}`,
               pts: wins,
               star: starHit,
@@ -4056,15 +4102,38 @@
             sheetsByWeek[s.week_id].push(s);
           });
 
+          // Players with no sheet still get away defaults on locked/final games
+          (profiles || []).forEach(prof => {
+            const t = totals[prof.id];
+            if (!t) return;
+            weeksList.forEach(w => {
+              const already = (sheetsByWeek[w.id] || []).some(s => s.user_id === prof.id);
+              if (already) return;
+              const weekGames = gamesByWeek[w.id] || [];
+              weekGames.forEach(gShape => {
+                if (!isLocked(gShape)) return;
+                const result = coverResultForStandings('away', gShape);
+                if (result === true) {
+                  t.wins++;
+                  t.pts++;
+                  t.any = true;
+                } else if (result === false) {
+                  t.losses++;
+                  t.any = true;
+                }
+              });
+            });
+          });
+
           weeksList.forEach(w => {
             const wGames = gamesByWeek[w.id] || [];
             if (!wGames.length || !weekIsFinal(wGames)) return;
             const actualTotal = tbActualTotal(wGames);
             const wSheets = sheetsByWeek[w.id] || [];
-            if (!wSheets.length) return;
 
-            const scored = wSheets.map(sheet => {
-              const picks = picksBySheet[sheet.id] || {};
+            const scored = (profiles || []).map(prof => {
+              const sheet = (wSheets || []).find(s => s.user_id === prof.id);
+              const picks = sheet ? (picksBySheet[sheet.id] || {}) : {};
               let wins = 0;
               wGames.forEach(gShape => {
                 let sel = picks[gShape.id];
@@ -4072,12 +4141,12 @@
                 if (!sel) return;
                 if (coverResultForStandings(sel, gShape) === true) wins++;
               });
-              const tbGuess = sheet.total_points_guess;
+              const tbGuess = sheet ? sheet.total_points_guess : null;
               let tbDist = null;
               if (actualTotal != null && tbGuess != null && !isNaN(Number(tbGuess))) {
                 tbDist = Math.abs(Number(tbGuess) - actualTotal);
               }
-              return { userId: sheet.user_id, pts: wins, tbDist };
+              return { userId: prof.id, pts: wins, tbDist };
             });
 
             scored.sort((a, b) => {
