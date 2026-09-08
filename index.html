@@ -1893,6 +1893,69 @@
       }, 4500);
     }
 
+    function commishNoteSeenKey(userId, noteId) {
+      return `pickem-seen-note:${userId}:${noteId}`;
+    }
+
+    async function showNewCommishNoteToast() {
+      if (!currentUser) return;
+      let note = null;
+      try {
+        const { data, error } = await sb
+          .from('commish_notes')
+          .select('id, body, created_at, author_id')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (error) throw error;
+        note = (data && data[0]) || null;
+      } catch (e) {
+        console.warn('commish note toast', e);
+        return;
+      }
+      if (!note || !note.id) return;
+      const key = commishNoteSeenKey(currentUser.id, note.id);
+      try {
+        if (localStorage.getItem(key)) return;
+        localStorage.setItem(key, '1');
+      } catch (_) {
+        return;
+      }
+
+      const launch = () => {
+        const existing = document.getElementById('commish-note-toast');
+        if (existing) existing.remove();
+        const toast = document.createElement('div');
+        toast.id = 'commish-note-toast';
+        toast.className = 'week-open-toast';
+        toast.setAttribute('role', 'status');
+        toast.style.cursor = 'pointer';
+        const snippet = String(note.body || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 90);
+        toast.innerHTML = snippet
+          ? `<strong>New note from the Commish</strong><div style="margin-top:0.35rem;font-size:0.85rem;color:var(--muted);">${escapeHtml(snippet)}${String(note.body || '').length > 90 ? '…' : ''}</div>`
+          : `<strong>New note from the Commish</strong>`;
+        toast.onclick = () => {
+          toast.remove();
+          showView('notes');
+        };
+        document.body.appendChild(toast);
+        setTimeout(() => {
+          toast.style.opacity = '0';
+          toast.style.transition = 'opacity 0.35s ease';
+          setTimeout(() => toast.remove(), 400);
+        }, 5500);
+      };
+
+      // Don’t stack on top of the week-open toast
+      if (document.getElementById('week-open-toast')) {
+        setTimeout(launch, 5200);
+      } else {
+        launch();
+      }
+    }
+
     async function loadGamesForWeek(weekId) {
       if (!weekId) {
         games = [];
@@ -1996,6 +2059,7 @@
           renderAll();
           startScorePolling();
           showWeekOpenToasts();
+          showNewCommishNoteToast();
         } else {
           stopScorePolling();
           games = [];
