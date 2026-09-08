@@ -84,8 +84,25 @@ function teamMatches(ourName, espnName) {
   return false;
 }
 
-async function fetchEspnScoreboard(dates) {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
+function espnTeamRecord(comp) {
+  const recs = comp?.records || [];
+  const overall = recs.find((r) => r.type === 'total' || /overall/i.test(r.name || '')) || recs[0];
+  const summary = overall?.summary || overall?.displayValue || '';
+  return summary ? String(summary).trim() : '';
+}
+
+function espnTeamRank(comp) {
+  const raw = comp?.curatedRank?.current ?? comp?.rank ?? comp?.team?.rank;
+  const n = Number(raw);
+  if (!n || n < 1 || n >= 99) return null;
+  return n;
+}
+
+async function fetchEspnScoreboard(dates, sport = 'college-football') {
+  const path = sport === 'nfl'
+    ? `football/nfl/scoreboard?limit=100&dates=${dates}`
+    : `football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${path}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('ESPN HTTP ' + res.status);
   return res.json();
@@ -120,9 +137,9 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // Active weeks (or picks_open) — update all games on those weeks
+    // Open/active weeks + NFL Test week (week_number = -1)
     const weeksRes = await fetch(
-      `${supabaseUrl}/rest/v1/weeks?or=(is_active.eq.true,picks_open.eq.true)&select=id,week_number,label`,
+      `${supabaseUrl}/rest/v1/weeks?or=(is_active.eq.true,picks_open.eq.true,week_number.eq.-1)&select=id,week_number,label`,
       {
         headers: {
           apikey: serviceKey,
@@ -137,8 +154,9 @@ module.exports = async function handler(req, res) {
     }
 
     const weekIds = weeks.map((w) => w.id);
+    const hasNflTest = weeks.some((w) => w.week_number === -1 || /nfl/i.test(String(w.label || '')));
     const gamesRes = await fetch(
-      `${supabaseUrl}/rest/v1/games?week_id=in.(${weekIds.join(',')})&select=id,away_team,home_team,away_score,home_score,status,game_date,kickoff_at`,
+      `${supabaseUrl}/rest/v1/games?week_id=in.(${weekIds.join(',')})&select=id,week_id,away_team,home_team,away_score,home_score,status,game_date,kickoff_at,away_record,home_record,away_rank,home_rank`,
       {
         headers: {
           apikey: serviceKey,
@@ -150,52 +168,68 @@ module.exports = async function handler(req, res) {
     const games = await gamesRes.json();
 
     // Date windows from slate + defaults
-    const windows = new Set(['20260829-20260914']);
+    const cfbWindows = new Set(['20260829-20260914']);
+    const nflWindows = new Set(['20260806-20260820']);
     games.forEach((g) => {
       const d = (g.game_date || '').replace(/-/g, '');
-      if (/^\d{8}$/.test(d)) windows.add(d);
+      if (/^\d{8}$/.test(d)) {
+        cfbWindows.add(d);
+        nflWindows.add(d);
+      }
       if (g.kickoff_at) {
         const k = g.kickoff_at.slice(0, 10).replace(/-/g, '');
-        if (/^\d{8}$/.test(k)) windows.add(k);
+        if (/^\d{8}$/.test(k)) {
+          cfbWindows.add(k);
+          nflWindows.add(k);
+        }
       }
     });
 
     const seen = new Set();
     const espnGames = [];
-    for (const dates of windows) {
-      try {
-        const data = await fetchEspnScoreboard(dates);
-        (data.events || []).forEach((ev) => {
-          if (ev.id && seen.has(ev.id)) return;
-          if (ev.id) seen.add(ev.id);
-          const comp = (ev.competitions && ev.competitions[0]) || {};
-          const competitors = comp.competitors || [];
-          const home = competitors.find((c) => c.homeAway === 'home');
-          const away = competitors.find((c) => c.homeAway === 'away');
-          if (!home || !away) return;
-          const statusType = (ev.status && ev.status.type) || {};
-          let status = 'scheduled';
-          if (statusType.completed || statusType.name === 'STATUS_FINAL') status = 'final';
-          else if (
-            statusType.state === 'in' ||
-            (statusType.name || '').includes('IN_PROGRESS') ||
-            statusType.description === 'In Progress' ||
-            (statusType.name || '').includes('HALFTIME')
-          ) {
-            status = 'live';
-          }
-          espnGames.push({
-            awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
-            homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
-            awayScore: away.score != null && away.score !== '' ? parseInt(away.score, 10) : null,
-            homeScore: home.score != null && home.score !== '' ? parseInt(home.score, 10) : null,
-            status,
+    async function collect(windows, sport) {
+      for (const dates of windows) {
+        try {
+          const data = await fetchEspnScoreboard(dates, sport);
+          (data.events || []).forEach((ev) => {
+            const key = sport + ':' + (ev.id || ev.name);
+            if (seen.has(key)) return;
+            seen.add(key);
+            const comp = (ev.competitions && ev.competitions[0]) || {};
+            const competitors = comp.competitors || [];
+            const home = competitors.find((c) => c.homeAway === 'home');
+            const away = competitors.find((c) => c.homeAway === 'away');
+            if (!home || !away) return;
+            const statusType = (ev.status && ev.status.type) || {};
+            let status = 'scheduled';
+            if (statusType.completed || statusType.name === 'STATUS_FINAL') status = 'final';
+            else if (
+              statusType.state === 'in' ||
+              (statusType.name || '').includes('IN_PROGRESS') ||
+              statusType.description === 'In Progress' ||
+              (statusType.name || '').includes('HALFTIME')
+            ) {
+              status = 'live';
+            }
+            espnGames.push({
+              awayName: away.team?.displayName || away.team?.shortDisplayName || away.team?.name,
+              homeName: home.team?.displayName || home.team?.shortDisplayName || home.team?.name,
+              awayScore: away.score != null && away.score !== '' ? parseInt(away.score, 10) : null,
+              homeScore: home.score != null && home.score !== '' ? parseInt(home.score, 10) : null,
+              status,
+              awayRecord: espnTeamRecord(away),
+              homeRecord: espnTeamRecord(home),
+              awayRank: espnTeamRank(away),
+              homeRank: espnTeamRank(home),
+            });
           });
-        });
-      } catch (e) {
-        console.warn('ESPN window failed', dates, e.message);
+        } catch (e) {
+          console.warn('ESPN window failed', sport, dates, e.message);
+        }
       }
     }
+    await collect(cfbWindows, 'college-football');
+    if (hasNflTest) await collect(nflWindows, 'nfl');
 
     let matched = 0;
     let updated = 0;
@@ -210,7 +244,11 @@ module.exports = async function handler(req, res) {
       if (
         g.away_score === match.awayScore &&
         g.home_score === match.homeScore &&
-        g.status === match.status
+        g.status === match.status &&
+        String(g.away_record || '') === String(match.awayRecord || '') &&
+        String(g.home_record || '') === String(match.homeRecord || '') &&
+        Number(g.away_rank || 0) === Number(match.awayRank || 0) &&
+        Number(g.home_rank || 0) === Number(match.homeRank || 0)
       ) {
         continue;
       }
@@ -227,6 +265,10 @@ module.exports = async function handler(req, res) {
           away_score: match.awayScore,
           home_score: match.homeScore,
           status: match.status,
+          away_record: match.awayRecord || null,
+          home_record: match.homeRecord || null,
+          away_rank: match.awayRank,
+          home_rank: match.homeRank,
         }),
       });
       if (!patchRes.ok) {
