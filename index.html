@@ -5021,7 +5021,6 @@
       return events;
     }
 
-    /**
     function espnTeamRecord(comp) {
       const recs = comp?.records || [];
       const overall = recs.find(r => r.type === 'total' || /overall/i.test(r.name || '')) || recs[0];
@@ -5036,10 +5035,6 @@
       return n;
     }
 
-    /**
-     * Pull scores from ESPN and write away_score / home_score / status to Supabase.
-   * @param {{ silent?: boolean }} opts  silent=true for background polling (no alerts)
-   */
     async function refreshScoresFromEspn(opts = {}) {
       const silent = !!opts.silent;
       if (!currentUser) return { matched: 0, updated: 0 };
@@ -5393,7 +5388,7 @@
           const tAway = away.team || {};
           const tHome = home.team || {};
           board.push({
-            ev, comp,
+            ev, comp, away, home,
             awayNames: [tAway.shortDisplayName, tAway.location, tAway.displayName, tAway.name, tAway.abbreviation].filter(Boolean),
             homeNames: [tHome.shortDisplayName, tHome.location, tHome.displayName, tHome.name, tHome.abbreviation].filter(Boolean)
           });
@@ -5466,6 +5461,21 @@
           const note = espnEventNotes(ev, comp);
           if (note) g.notes = note;
 
+          // --- Record + ranking ---
+          let awayRecord = espnTeamRecord(hit.away);
+          let homeRecord = espnTeamRecord(hit.home);
+          let awayRank = espnTeamRank(hit.away);
+          let homeRank = espnTeamRank(hit.home);
+          if (orient === 'swapped') {
+            const ar = awayRecord, hr = homeRecord, ak = awayRank, hk = homeRank;
+            awayRecord = hr; homeRecord = ar;
+            awayRank = hk; homeRank = ak;
+          }
+          g.away_record = awayRecord || '';
+          g.home_record = homeRecord || '';
+          g.away_rank = awayRank;
+          g.home_rank = homeRank;
+
           // --- Persist ---
           if (g._fromDb || (typeof g.id === 'string' && /^[0-9a-f-]{36}$/i.test(g.id) && !String(g.id).startsWith('new-'))) {
             const payload = {
@@ -5475,7 +5485,11 @@
               game_date: g.date || null,
               kickoff_at: g.kickoff || null,
               notes: g.notes || null,
-              total_line: g.totalLine != null ? Number(g.totalLine) : null
+              total_line: g.totalLine != null ? Number(g.totalLine) : null,
+              away_record: awayRecord || null,
+              home_record: homeRecord || null,
+              away_rank: awayRank,
+              home_rank: homeRank
             };
             const { error } = await sb.from('games').update(payload).eq('id', g.id);
             if (error) throw error;
