@@ -3710,7 +3710,9 @@
           r.userId === currentUser?.id ? 'my-row' : '',
           isWinner ? 'winner-row' : ''
         ].filter(Boolean).join(' ');
-        const rankLabel = r.submitted ? (r.rank != null ? r.rank : i + 1) : '—';
+        const rankLabel = r.submitted
+          ? (r.rank != null ? (r.rankTied ? `T${r.rank}` : String(r.rank)) : String(i + 1))
+          : '—';
         const nameExtra = [
           r.autoDefault ? ' <span style="color:var(--muted);font-size:0.75rem;">(away defaults)</span>'
             : (r.submitted ? '' : ' <span style="color:var(--muted);font-size:0.75rem;">(no picks)</span>'),
@@ -3765,23 +3767,59 @@
     }
 
     function assignRanks(rows, cmp) {
-      // rows already sorted; assign competition ranks
-      let rank = 0;
-      let prevKey = null;
-      rows.forEach((r, i) => {
+      // kept for any leftover callers — points-only dense rank
+      assignPointsOnlyRanks(rows);
+    }
+
+    /** Same points = same place. Rank = 1 + how many people have more points. */
+    function assignPointsOnlyRanks(rows) {
+      const submitted = rows.filter(r => r.submitted);
+      submitted.forEach(r => {
+        const pts = Number(r.pts);
+        r.rank = 1 + submitted.filter(o => Number(o.pts) > pts).length;
+      });
+      rows.forEach(r => {
         if (!r.submitted) {
           r.rank = null;
+          r.rankTied = false;
           return;
         }
-        const key = cmp(r);
-        if (prevKey === null || key !== prevKey) {
-          rank = i + 1 - rows.slice(0, i).filter(x => !x.submitted).length;
-          // simpler: count submitted before this
-          const submittedBefore = rows.slice(0, i).filter(x => x.submitted).length;
-          rank = submittedBefore + 1;
-          prevKey = key;
+        r.rankTied = submitted.filter(o => o.rank === r.rank).length > 1;
+      });
+    }
+
+    /**
+     * Weekly: TB only splits the top points group into the winner(s) vs everyone else on that score.
+     * All lower scores are tied by points only (T4, T9, …).
+     */
+    function assignWeeklyRanks(rows, winners, weekFinal) {
+      const submitted = rows.filter(r => r.submitted);
+      if (!submitted.length) {
+        rows.forEach(r => { r.rank = null; r.rankTied = false; });
+        return;
+      }
+      const winnerIds = new Set((winners || []).map(w => w.userId));
+      const maxPts = Math.max(...submitted.map(o => Number(o.pts)));
+      const winnerCount = submitted.filter(o =>
+        Number(o.pts) === maxPts && winnerIds.has(o.userId)
+      ).length;
+
+      submitted.forEach(r => {
+        const pts = Number(r.pts);
+        const betterPts = submitted.filter(o => Number(o.pts) > pts).length;
+        if (weekFinal && winnerCount && pts === maxPts) {
+          r.rank = winnerIds.has(r.userId) ? 1 : (1 + winnerCount);
+        } else {
+          r.rank = 1 + betterPts;
         }
-        r.rank = rank;
+      });
+      rows.forEach(r => {
+        if (!r.submitted) {
+          r.rank = null;
+          r.rankTied = false;
+          return;
+        }
+        r.rankTied = submitted.filter(o => o.rank === r.rank).length > 1;
       });
     }
 
@@ -3985,8 +4023,6 @@
             return a.name.localeCompare(b.name);
           });
 
-          assignRanks(rows, r => `${r.pts}|${r.tbDist == null ? 'inf' : r.tbDist}`);
-
           let winners = [];
           if (finalWeek) {
             const submitted = rows.filter(r => r.submitted);
@@ -3999,6 +4035,7 @@
               );
             }
           }
+          assignWeeklyRanks(rows, winners, finalWeek);
 
           const tbVisible = tbGuessVisible(games);
           standingsCacheRows = rows;
@@ -4187,11 +4224,7 @@
           });
 
           sortStandingsRows(rows, standingsSort.key, standingsSort.dir);
-          assignRanks(rows, r => {
-            if (standingsSort.key === 'star') return `${r.star}|${r.pts}`;
-            if (standingsSort.key === 'weekWins') return `${r.weekWins}|${r.pts}`;
-            return `${r.pts}|${r.star}`;
-          });
+          assignPointsOnlyRanks(rows);
 
           standingsCacheRows = rows;
           paintStandingsTable(rows, {
