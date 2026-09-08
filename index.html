@@ -1558,7 +1558,7 @@
       }
       const leavingPicks = document.getElementById('view-picks')?.classList.contains('active') && v !== 'picks';
       if (leavingPicks && !confirmLeavePicks()) return;
-      if (v === 'picks' || v === 'others') await ensurePicksWeekIsOpen();
+      if (v === 'picks') await ensurePicksWeekIsOpen();
       if (v === 'others') renderOthers();
       if (v === 'standings') renderStandings('week');
       if (v === 'admin') renderAdmin();
@@ -1633,14 +1633,13 @@
     }
 
     function renderWeekTabs() {
-      // Standings can show all weeks that exist (for past week standings); picks/group use open/active
-      // Hide leftover NFL Test week from the temporary preseason experiment
+      // My Picks: only weeks still open. Group Picks + Standings: all published weeks.
       const base = allWeeks.filter(w => !(w.label === 'NFL Test' || w.week_number === -1));
       const openWeeks = base.filter(w => w.picks_open);
       const allForStandings = base.length ? base : openWeeks;
       const containers = [
         { id: 'week-tabs', weeks: openWeeks, highlight: true },
-        { id: 'week-tabs-group', weeks: openWeeks, highlight: true },
+        { id: 'week-tabs-group', weeks: allForStandings, highlight: true },
         {
           id: 'week-tabs-standings',
           weeks: allForStandings,
