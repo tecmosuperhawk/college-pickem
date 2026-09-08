@@ -393,6 +393,18 @@
     }
     .team.disabled { cursor: default; opacity: 0.9; }
     .team-name { font-weight: 700; font-size: 1rem; }
+    .team-rank {
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 800;
+      margin-right: 0.28rem;
+    }
+    .team-meta {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+      margin-left: 0.28rem;
+    }
     .team-score { font-size: 0.9rem; color: var(--muted); font-weight: 600; }
     .team-line {
       display: block;
@@ -1563,6 +1575,10 @@
         away_score: g.away_score,
         home_score: g.home_score,
         status: g.status,
+        away_record: g.away_record || '',
+        home_record: g.home_record || '',
+        away_rank: g.away_rank != null ? Number(g.away_rank) : null,
+        home_rank: g.home_rank != null ? Number(g.home_rank) : null,
         _fromDb: true
       };
     }
@@ -1724,6 +1740,17 @@
     }
 
     /** Open / Locked / Live / Final badge for a game card */
+    function teamNameHtml(g, side) {
+      const name = side === 'away' ? g.away : g.home;
+      const rank = side === 'away' ? g.away_rank : g.home_rank;
+      const rec = side === 'away' ? g.away_record : g.home_record;
+      const rankBit = rank && Number(rank) > 0 && Number(rank) < 99
+        ? `<span class="team-rank">#${Number(rank)}</span>`
+        : '';
+      const recBit = rec ? `<span class="team-meta">(${escapeHtml(rec)})</span>` : '';
+      return `${rankBit}${escapeHtml(name || '')}${recBit}`;
+    }
+
     function gameStatusBadge(g) {
       const score = LIVE_SCORES[g.id];
       const locked = isLocked(g);
@@ -2702,7 +2729,7 @@
           <div class="game-body">
             <div class="team away ${sel==='away'?'selected':''} ${resultClass && sel==='away'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="away">
               <span class="marker">•</span>
-              <span class="team-name">${g.away}</span>
+              <span class="team-name">${teamNameHtml(g, 'away')}</span>
               ${sel==='away' ? resultBadge : ''}
               ${displayScoreForTeam(g, 'away')}
               <span class="team-line">${formatOdds(-g.odds)}</span>
@@ -2710,7 +2737,7 @@
             <div class="vs">vs<span class="odds">${formatOdds(g.odds)}</span></div>
             <div class="team home ${sel==='home'?'selected':''} ${resultClass && sel==='home'?resultClass:''} ${locked?'disabled':''}" data-id="${g.id}" data-side="home">
               <span class="marker">•</span>
-              <span class="team-name">${g.home}</span>
+              <span class="team-name">${teamNameHtml(g, 'home')}</span>
               ${sel==='home' ? resultBadge : ''}
               ${displayScoreForTeam(g, 'home')}
               <span class="team-line">${formatOdds(g.odds)}</span>
@@ -4995,7 +5022,22 @@
     }
 
     /**
-   * Pull scores from ESPN and write away_score / home_score / status to Supabase.
+    function espnTeamRecord(comp) {
+      const recs = comp?.records || [];
+      const overall = recs.find(r => r.type === 'total' || /overall/i.test(r.name || '')) || recs[0];
+      const summary = overall?.summary || overall?.displayValue || '';
+      return summary ? String(summary).trim() : '';
+    }
+
+    function espnTeamRank(comp) {
+      const raw = comp?.curatedRank?.current ?? comp?.rank ?? comp?.team?.rank;
+      const n = Number(raw);
+      if (!n || n < 1 || n >= 99) return null;
+      return n;
+    }
+
+    /**
+     * Pull scores from ESPN and write away_score / home_score / status to Supabase.
    * @param {{ silent?: boolean }} opts  silent=true for background polling (no alerts)
    */
     async function refreshScoresFromEspn(opts = {}) {
@@ -5096,7 +5138,11 @@
             homeScore,
             status,
             detail: statusType.detail || statusType.shortDetail || '',
-            homeLine
+            homeLine,
+            awayRecord: espnTeamRecord(away),
+            homeRecord: espnTeamRecord(home),
+            awayRank: espnTeamRank(away),
+            homeRank: espnTeamRank(home)
           });
         });
 
@@ -5114,10 +5160,18 @@
           // If ESPN has home/away swapped relative to our slate, still use our sides' scores by name
           let awayScore = match.awayScore;
           let homeScore = match.homeScore;
+          let awayRecord = match.awayRecord || '';
+          let homeRecord = match.homeRecord || '';
+          let awayRank = match.awayRank;
+          let homeRank = match.homeRank;
           if (!(teamMatches(g.away, match.awayName) && teamMatches(g.home, match.homeName))) {
             // swapped names
             awayScore = match.homeScore;
             homeScore = match.awayScore;
+            awayRecord = match.homeRecord || '';
+            homeRecord = match.awayRecord || '';
+            awayRank = match.homeRank;
+            homeRank = match.awayRank;
           }
           const newStatus = match.status;
 
@@ -5127,7 +5181,11 @@
           const same =
             g.away_score === awayScore &&
             g.home_score === homeScore &&
-            String(g.status || '').toLowerCase() === String(newStatus || '').toLowerCase();
+            String(g.status || '').toLowerCase() === String(newStatus || '').toLowerCase() &&
+            String(g.away_record || '') === String(awayRecord || '') &&
+            String(g.home_record || '') === String(homeRecord || '') &&
+            Number(g.away_rank || 0) === Number(awayRank || 0) &&
+            Number(g.home_rank || 0) === Number(homeRank || 0);
           if (same) {
             // Still ensure LIVE_SCORES is populated for UI
             if ((newStatus === 'final' || newStatus === 'live') && awayScore != null && homeScore != null) {
@@ -5152,7 +5210,11 @@
               .update({
                 away_score: awayScore,
                 home_score: homeScore,
-                status: statusForDb
+                status: statusForDb,
+                away_record: awayRecord || null,
+                home_record: homeRecord || null,
+                away_rank: awayRank,
+                home_rank: homeRank
               })
               .eq('id', g.id);
             if (error) {
@@ -5169,6 +5231,10 @@
           g.away_score = awayScore;
           g.home_score = homeScore;
           g.status = statusToStore;
+          g.away_record = awayRecord || '';
+          g.home_record = homeRecord || '';
+          g.away_rank = awayRank;
+          g.home_rank = homeRank;
           if ((statusToStore === 'final' || statusToStore === 'live') && awayScore != null && homeScore != null) {
             LIVE_SCORES[g.id] = {
               away: awayScore,
