@@ -5100,17 +5100,49 @@
     }
 
 
-    async function fetchEspnEventsForWeek() {
+    function ymdUtc(d) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}${m}${day}`;
+    }
+
+    /** ESPN date windows for this slate. Week 3+ used to fall back to Week 0–1 dates. */
+    function espnWindowsForCurrentSlate() {
+      const windows = new Set();
       const w = currentWeekMeta();
-      const windows = [];
-      if (w && w.week_number === 0) windows.push('20260829-20260904');
-      else if (w && w.week_number === 1) windows.push('20260905-20260914');
-      else windows.push('20260829-20260914');
-      const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
-      if (ds.length) {
-        const lo = ds[0], hi = ds[ds.length - 1];
-        windows.push(lo === hi ? lo : `${lo}-${hi}`);
+      const n = Number(w && w.week_number);
+      // 2026 Week 0 Thursday = Aug 27; each CFB week is +7 days
+      if (Number.isFinite(n) && n >= 0) {
+        const week0Thu = Date.UTC(2026, 7, 27);
+        const start = new Date(week0Thu + n * 7 * 86400000);
+        const end = new Date(start.getTime() + 8 * 86400000);
+        windows.add(`${ymdUtc(start)}-${ymdUtc(end)}`);
       }
+      // Nearby games even if dates aren't filled in yet
+      const now = new Date();
+      const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+      const to = new Date(from.getTime() + 12 * 86400000);
+      windows.add(`${ymdUtc(from)}-${ymdUtc(to)}`);
+
+      const ds = [];
+      games.forEach(g => {
+        const raw = (g.date || '').replace(/-/g, '');
+        if (/^\d{8}$/.test(raw)) ds.push(raw);
+        if (g.kickoff) {
+          const k = String(g.kickoff).slice(0, 10).replace(/-/g, '');
+          if (/^\d{8}$/.test(k)) ds.push(k);
+        }
+      });
+      ds.sort();
+      if (ds.length) {
+        windows.add(ds[0] === ds[ds.length - 1] ? ds[0] : `${ds[0]}-${ds[ds.length - 1]}`);
+      }
+      return [...windows];
+    }
+
+    async function fetchEspnEventsForWeek() {
+      const windows = espnWindowsForCurrentSlate();
       const seen = new Set();
       const events = [];
       for (const dates of [...new Set(windows)]) {
@@ -5152,19 +5184,7 @@
         btn.textContent = 'Updating…';
       }
       try {
-        const ds = games.map(g => (g.date || '').replace(/-/g, '')).filter(d => /^\d{8}$/.test(d)).sort();
-        const windows = new Set(['20260829-20260914']);
-        if (ds.length) {
-          const lo = ds[0], hi = ds[ds.length - 1];
-          windows.add(lo === hi ? lo : `${lo}-${hi}`);
-          ds.forEach(d => windows.add(d));
-        }
-        games.forEach(g => {
-          if (g.kickoff) {
-            const k = String(g.kickoff).slice(0, 10).replace(/-/g, '');
-            if (/^\d{8}$/.test(k)) windows.add(k);
-          }
-        });
+        const windows = espnWindowsForCurrentSlate();
 
         const events = [];
         const seenEv = new Set();
