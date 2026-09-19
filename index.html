@@ -5084,19 +5084,32 @@
     }
 
     async function fetchEspnScoreboard(dates, { sport = 'college-football' } = {}) {
+      const qs = dates ? `dates=${encodeURIComponent(dates)}&sport=${encodeURIComponent(sport)}` : `sport=${encodeURIComponent(sport)}`;
       const path = sport === 'nfl'
-        ? `football/nfl/scoreboard?limit=100&dates=${dates}`
-        : `football/college-football/scoreboard?groups=80&limit=500&dates=${dates}`;
-      const url = `https://site.api.espn.com/apis/site/v2/sports/${path}`;
-      let res;
-      try {
-        res = await fetch(url);
-      } catch (e) {
-        const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
-        res = await fetch(proxy);
+        ? `football/nfl/scoreboard?limit=100${dates ? `&dates=${dates}` : ''}`
+        : `football/college-football/scoreboard?groups=80&limit=500${dates ? `&dates=${dates}` : ''}`;
+      const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/${path}`;
+      const attempts = [
+        `/api/espn-scoreboard?${qs}`,
+        espnUrl,
+        'https://corsproxy.io/?' + encodeURIComponent(espnUrl)
+      ];
+      let lastErr = null;
+      for (const url of attempts) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) {
+            lastErr = new Error('HTTP ' + res.status);
+            continue;
+          }
+          const data = await res.json();
+          if (data && (Array.isArray(data.events) || data.leagues)) return data;
+          lastErr = new Error('Empty ESPN payload');
+        } catch (e) {
+          lastErr = e;
+        }
       }
-      if (!res.ok) throw new Error('ESPN scoreboard HTTP ' + res.status);
-      return res.json();
+      throw lastErr || new Error('ESPN scoreboard failed');
     }
 
 
@@ -5137,7 +5150,10 @@
       ds.sort();
       if (ds.length) {
         windows.add(ds[0] === ds[ds.length - 1] ? ds[0] : `${ds[0]}-${ds[ds.length - 1]}`);
+        [...new Set(ds)].forEach(d => windows.add(d));
       }
+      // Live/current board (no dates) — most reliable for tonight's games
+      windows.add('');
       return [...windows];
     }
 
